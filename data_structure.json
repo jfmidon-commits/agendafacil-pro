@@ -1,0 +1,162 @@
+{
+  "users": {
+    "description": "Profissionais autônomos cadastrados",
+    "fields": {
+      "name": "string - Nome completo",
+      "email": "string - E-mail de login",
+      "phone": "string - WhatsApp com +55",
+      "slug": "string - Link personalizado (ex: carlos-barbearia)",
+      "businessName": "string - Nome do negócio",
+      "businessDescription": "string - Descrição do negócio",
+      "avatar": "string - URL da foto",
+      "address": "string - Endereço do atendimento",
+      "city": "string - Cidade",
+      "plan": "string - free | pro | studio",
+      "trialEndsAt": "timestamp - Fim do trial",
+      "subscriptionStatus": "string - active | cancelled | past_due",
+      "workingHours": "map - Horários de cada dia da semana",
+      "slotDuration": "number - Minutos entre agendamentos (15, 30, 45, 60)",
+      "createdAt": "timestamp",
+      "updatedAt": "timestamp"
+    },
+    "example": {
+      "name": "Carlos Silva",
+      "email": "carlos@barbearia.com",
+      "phone": "+5511999999999",
+      "slug": "carlos-barbearia",
+      "businessName": "Carlos Barbearia",
+      "businessDescription": "Especialista em cortes masculinos",
+      "avatar": "",
+      "address": "Rua das Flores, 123",
+      "city": "São Paulo",
+      "plan": "pro",
+      "trialEndsAt": "2026-09-11T00:00:00Z",
+      "subscriptionStatus": "active",
+      "workingHours": {
+        "monday": {
+          "open": "09:00",
+          "close": "18:00",
+          "enabled": true
+        },
+        "tuesday": {
+          "open": "09:00",
+          "close": "18:00",
+          "enabled": true
+        },
+        "wednesday": {
+          "open": "09:00",
+          "close": "18:00",
+          "enabled": true
+        },
+        "thursday": {
+          "open": "09:00",
+          "close": "18:00",
+          "enabled": true
+        },
+        "friday": {
+          "open": "09:00",
+          "close": "18:00",
+          "enabled": true
+        },
+        "saturday": {
+          "open": "09:00",
+          "close": "14:00",
+          "enabled": true
+        },
+        "sunday": {
+          "open": "",
+          "close": "",
+          "enabled": false
+        }
+      },
+      "slotDuration": 30,
+      "createdAt": "2026-08-28T00:00:00Z",
+      "updatedAt": "2026-08-28T00:00:00Z"
+    }
+  },
+  "services": {
+    "description": "Serviços oferecidos por cada profissional",
+    "fields": {
+      "userId": "string - ID do profissional (referência)",
+      "name": "string - Nome do serviço",
+      "duration": "number - Duração em minutos",
+      "price": "number - Preço em reais",
+      "description": "string - Descrição do serviço",
+      "color": "string - Cor em hex (ex: #10B981)",
+      "active": "boolean - Serviço está ativo?",
+      "createdAt": "timestamp"
+    },
+    "examples": [
+      {
+        "userId": "demo-profissional-001",
+        "name": "Corte de Cabelo",
+        "duration": 30,
+        "price": 35.0,
+        "description": "Corte masculino",
+        "color": "#10B981",
+        "active": true
+      },
+      {
+        "userId": "demo-profissional-001",
+        "name": "Barba",
+        "duration": 20,
+        "price": 25.0,
+        "description": "Barba completa",
+        "color": "#3B82F6",
+        "active": true
+      },
+      {
+        "userId": "demo-profissional-001",
+        "name": "Corte + Barba",
+        "duration": 45,
+        "price": 55.0,
+        "description": "Combo",
+        "color": "#F59E0B",
+        "active": true
+      }
+    ]
+  },
+  "appointments": {
+    "description": "Agendamentos de clientes",
+    "fields": {
+      "userId": "string - ID do profissional",
+      "serviceId": "string - ID do serviço",
+      "clientName": "string - Nome do cliente",
+      "clientPhone": "string - WhatsApp do cliente",
+      "clientEmail": "string - E-mail do cliente",
+      "date": "string - Data no formato YYYY-MM-DD",
+      "time": "string - Horário no formato HH:MM",
+      "status": "string - confirmed | cancelled | completed | no-show",
+      "notes": "string - Observações",
+      "reminderSent": "boolean - Lembrete enviado?",
+      "createdAt": "timestamp"
+    },
+    "example": {
+      "userId": "demo-profissional-001",
+      "serviceId": "service-001",
+      "clientName": "João Pedro",
+      "clientPhone": "+5511988888888",
+      "clientEmail": "joao@email.com",
+      "date": "2026-08-29",
+      "time": "14:00",
+      "status": "confirmed",
+      "notes": "Primeira vez",
+      "reminderSent": false,
+      "createdAt": "2026-08-28T00:00:00Z"
+    }
+  },
+  "subscriptions": {
+    "description": "Assinaturas Stripe dos usuários",
+    "fields": {
+      "userId": "string - ID do usuário",
+      "stripeCustomerId": "string - ID do cliente no Stripe",
+      "stripeSubscriptionId": "string - ID da assinatura no Stripe",
+      "plan": "string - pro | studio",
+      "status": "string - active | cancelled | past_due",
+      "currentPeriodStart": "timestamp",
+      "currentPeriodEnd": "timestamp",
+      "cancelAtPeriodEnd": "boolean",
+      "createdAt": "timestamp"
+    }
+  }
+}
