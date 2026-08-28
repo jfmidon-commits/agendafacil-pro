@@ -1,0 +1,81 @@
+# ═══════════════════════════════════════════════════════════
+# AGENDAFÁCIL PRO - .gitignore
+# ═══════════════════════════════════════════════════════════
+
+# Credenciais e chaves
+*.json
+!data_structure.json
+!package.json
+!package-lock.json
+agendafacil-pro-firebase-adminsdk-*.json
+service-account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Variáveis de ambiente
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+env/
+ENV/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# FlutterFlow
+.flutterflow/
+flutterflow_export/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Firebase
+.firebase/
+firestore.rules.bak
+
+# Stripe (local testing)
+stripe_test_*.json
