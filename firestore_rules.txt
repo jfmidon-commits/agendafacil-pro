@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: users (profissionais)
+    // ═══════════════════════════════════════════════════════
+    match /users/{userId} {
+      // Qualquer um pode ler dados públicos (para página de agendamento)
+      allow read: if true;
+      // Apenas o dono pode editar
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: services (serviços oferecidos)
+    // ═══════════════════════════════════════════════════════
+    match /services/{serviceId} {
+      // Qualquer um pode ver serviços (página pública)
+      allow read: if true;
+      // Apenas o profissional dono pode criar/editar
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: appointments (agendamentos)
+    // ═══════════════════════════════════════════════════════
+    match /appointments/{appointmentId} {
+      // Cliente pode criar agendamento sem login
+      allow create: if true;
+      // Leitura permitida para autenticados (profissional vê seus agendamentos)
+      allow read: if request.auth != null;
+      // Atualização apenas pelo profissional dono
+      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: subscriptions (assinaturas Stripe)
+    // ═══════════════════════════════════════════════════════
+    match /subscriptions/{subscriptionId} {
+      // Apenas o dono pode ler sua assinatura
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      // Escrita apenas pelo sistema (webhooks Stripe)
+      allow write: if false;
+    }
+
+  }
+}
