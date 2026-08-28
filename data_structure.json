@@ -1,162 +1,118 @@
 {
   "users": {
-    "description": "Profissionais autônomos cadastrados",
+    "description": "DADOS PRIVADOS do profissional (apenas dono acessa)",
     "fields": {
       "name": "string - Nome completo",
       "email": "string - E-mail de login",
       "phone": "string - WhatsApp com +55",
-      "slug": "string - Link personalizado (ex: carlos-barbearia)",
-      "businessName": "string - Nome do negócio",
-      "businessDescription": "string - Descrição do negócio",
-      "avatar": "string - URL da foto",
-      "address": "string - Endereço do atendimento",
-      "city": "string - Cidade",
       "plan": "string - free | pro | studio",
+      "trialStatus": "string - active | ended | never",
       "trialEndsAt": "timestamp - Fim do trial",
       "subscriptionStatus": "string - active | cancelled | past_due",
-      "workingHours": "map - Horários de cada dia da semana",
-      "slotDuration": "number - Minutos entre agendamentos (15, 30, 45, 60)",
+      "stripeCustomerId": "string - ID do cliente Stripe",
       "createdAt": "timestamp",
       "updatedAt": "timestamp"
-    },
-    "example": {
-      "name": "Carlos Silva",
-      "email": "carlos@barbearia.com",
-      "phone": "+5511999999999",
-      "slug": "carlos-barbearia",
-      "businessName": "Carlos Barbearia",
-      "businessDescription": "Especialista em cortes masculinos",
-      "avatar": "",
-      "address": "Rua das Flores, 123",
-      "city": "São Paulo",
-      "plan": "pro",
-      "trialEndsAt": "2026-09-11T00:00:00Z",
-      "subscriptionStatus": "active",
-      "workingHours": {
-        "monday": {
-          "open": "09:00",
-          "close": "18:00",
-          "enabled": true
-        },
-        "tuesday": {
-          "open": "09:00",
-          "close": "18:00",
-          "enabled": true
-        },
-        "wednesday": {
-          "open": "09:00",
-          "close": "18:00",
-          "enabled": true
-        },
-        "thursday": {
-          "open": "09:00",
-          "close": "18:00",
-          "enabled": true
-        },
-        "friday": {
-          "open": "09:00",
-          "close": "18:00",
-          "enabled": true
-        },
-        "saturday": {
-          "open": "09:00",
-          "close": "14:00",
-          "enabled": true
-        },
-        "sunday": {
-          "open": "",
-          "close": "",
-          "enabled": false
-        }
-      },
-      "slotDuration": 30,
-      "createdAt": "2026-08-28T00:00:00Z",
-      "updatedAt": "2026-08-28T00:00:00Z"
+    }
+  },
+  "publicProfiles": {
+    "description": "DADOS PÚBLICOS do profissional (qualquer um vê)",
+    "fields": {
+      "userId": "string - Referência ao documento users",
+      "slug": "string - URL amigável (ex: carlos-barbearia)",
+      "businessName": "string - Nome do negócio",
+      "businessDescription": "string - Descrição",
+      "avatar": "string - URL da foto",
+      "address": "string - Endereço",
+      "city": "string - Cidade",
+      "state": "string - Estado (ex: SP)",
+      "workingHours": "map - Horários por dia da semana",
+      "slotDuration": "number - Minutos entre agendamentos",
+      "bufferBefore": "number - Minutos de buffer antes",
+      "bufferAfter": "number - Minutos de buffer depois",
+      "timezone": "string - Fuso horário (ex: America/Sao_Paulo)",
+      "isActive": "boolean - Perfil está ativo?",
+      "createdAt": "timestamp",
+      "updatedAt": "timestamp"
     }
   },
   "services": {
-    "description": "Serviços oferecidos por cada profissional",
+    "description": "Serviços oferecidos",
     "fields": {
-      "userId": "string - ID do profissional (referência)",
+      "userId": "string - ID do profissional",
       "name": "string - Nome do serviço",
       "duration": "number - Duração em minutos",
       "price": "number - Preço em reais",
-      "description": "string - Descrição do serviço",
-      "color": "string - Cor em hex (ex: #10B981)",
-      "active": "boolean - Serviço está ativo?",
+      "description": "string - Descrição",
+      "color": "string - Cor em hex",
+      "bufferBefore": "number - Buffer antes (min)",
+      "bufferAfter": "number - Buffer depois (min)",
+      "active": "boolean",
       "createdAt": "timestamp"
-    },
-    "examples": [
-      {
-        "userId": "demo-profissional-001",
-        "name": "Corte de Cabelo",
-        "duration": 30,
-        "price": 35.0,
-        "description": "Corte masculino",
-        "color": "#10B981",
-        "active": true
-      },
-      {
-        "userId": "demo-profissional-001",
-        "name": "Barba",
-        "duration": 20,
-        "price": 25.0,
-        "description": "Barba completa",
-        "color": "#3B82F6",
-        "active": true
-      },
-      {
-        "userId": "demo-profissional-001",
-        "name": "Corte + Barba",
-        "duration": 45,
-        "price": 55.0,
-        "description": "Combo",
-        "color": "#F59E0B",
-        "active": true
-      }
-    ]
+    }
+  },
+  "availabilityRules": {
+    "description": "Regras de disponibilidade por dia da semana",
+    "fields": {
+      "userId": "string - ID do profissional",
+      "dayOfWeek": "number - 0=Dom, 1=Seg, ..., 6=Sab",
+      "dayName": "string - Nome do dia",
+      "startTime": "string - HH:MM",
+      "endTime": "string - HH:MM",
+      "isAvailable": "boolean - Dia está disponível?",
+      "slotDuration": "number - Minutos entre slots",
+      "bufferBefore": "number - Minutos",
+      "bufferAfter": "number - Minutos",
+      "createdAt": "timestamp"
+    }
+  },
+  "scheduleBlocks": {
+    "description": "Bloqueios específicos (folga, almoço, indisponível)",
+    "fields": {
+      "userId": "string - ID do profissional",
+      "startAt": "timestamp - Início do bloqueio",
+      "endAt": "timestamp - Fim do bloqueio",
+      "reason": "string - Motivo",
+      "type": "string - break | timeoff | blocked",
+      "createdAt": "timestamp"
+    }
   },
   "appointments": {
-    "description": "Agendamentos de clientes",
+    "description": "Agendamentos v2.0 (APENAS via API /api/book)",
     "fields": {
       "userId": "string - ID do profissional",
       "serviceId": "string - ID do serviço",
-      "clientName": "string - Nome do cliente",
-      "clientPhone": "string - WhatsApp do cliente",
-      "clientEmail": "string - E-mail do cliente",
-      "date": "string - Data no formato YYYY-MM-DD",
-      "time": "string - Horário no formato HH:MM",
+      "serviceName": "string - Snapshot do nome",
+      "serviceDuration": "number - Snapshot da duração",
+      "bufferBefore": "number - Snapshot",
+      "bufferAfter": "number - Snapshot",
+      "totalDuration": "number - Duração total calculada",
+      "clientName": "string",
+      "clientPhone": "string",
+      "clientEmail": "string",
+      "startsAt": "timestamp - Início do agendamento",
+      "endsAt": "timestamp - Fim do agendamento",
+      "timezone": "string - Fuso horário",
       "status": "string - confirmed | cancelled | completed | no-show",
       "notes": "string - Observações",
       "reminderSent": "boolean - Lembrete enviado?",
+      "cancelledAt": "timestamp | null",
+      "cancelledBy": "string - client | professional | null",
       "createdAt": "timestamp"
-    },
-    "example": {
-      "userId": "demo-profissional-001",
-      "serviceId": "service-001",
-      "clientName": "João Pedro",
-      "clientPhone": "+5511988888888",
-      "clientEmail": "joao@email.com",
-      "date": "2026-08-29",
-      "time": "14:00",
-      "status": "confirmed",
-      "notes": "Primeira vez",
-      "reminderSent": false,
-      "createdAt": "2026-08-28T00:00:00Z"
     }
   },
   "subscriptions": {
-    "description": "Assinaturas Stripe dos usuários",
+    "description": "Assinaturas Stripe (fonte oficial da verdade)",
     "fields": {
       "userId": "string - ID do usuário",
-      "stripeCustomerId": "string - ID do cliente no Stripe",
-      "stripeSubscriptionId": "string - ID da assinatura no Stripe",
+      "stripeCustomerId": "string",
+      "stripeSubscriptionId": "string",
       "plan": "string - pro | studio",
       "status": "string - active | cancelled | past_due",
       "currentPeriodStart": "timestamp",
       "currentPeriodEnd": "timestamp",
       "cancelAtPeriodEnd": "boolean",
-      "createdAt": "timestamp"
+      "createdAt": "timestamp",
+      "updatedAt": "timestamp"
     }
   }
 }
