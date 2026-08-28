@@ -3,46 +3,74 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ═══════════════════════════════════════════════════════
-    // COLEÇÃO: users (profissionais)
+    // COLEÇÃO: users (DADOS PRIVADOS - apenas dono)
     // ═══════════════════════════════════════════════════════
     match /users/{userId} {
-      // Qualquer um pode ler dados públicos (para página de agendamento)
-      allow read: if true;
-      // Apenas o dono pode editar
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
     // ═══════════════════════════════════════════════════════
-    // COLEÇÃO: services (serviços oferecidos)
+    // COLEÇÃO: publicProfiles (DADOS PÚBLICOS - leitura aberta)
+    // ═══════════════════════════════════════════════════════
+    match /publicProfiles/{profileId} {
+      allow read: if true;
+      allow create: if request.auth != null && request.auth.uid == profileId;
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: services (leitura pública, escrita pelo dono)
     // ═══════════════════════════════════════════════════════
     match /services/{serviceId} {
-      // Qualquer um pode ver serviços (página pública)
       allow read: if true;
-      // Apenas o profissional dono pode criar/editar
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
       allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
     // ═══════════════════════════════════════════════════════
-    // COLEÇÃO: appointments (agendamentos)
+    // COLEÇÃO: availabilityRules (leitura pública, escrita pelo dono)
     // ═══════════════════════════════════════════════════════
-    match /appointments/{appointmentId} {
-      // Cliente pode criar agendamento sem login
-      allow create: if true;
-      // Leitura permitida para autenticados (profissional vê seus agendamentos)
-      allow read: if request.auth != null;
-      // Atualização apenas pelo profissional dono
-      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    match /availabilityRules/{ruleId} {
+      allow read: if true;
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
     // ═══════════════════════════════════════════════════════
-    // COLEÇÃO: subscriptions (assinaturas Stripe)
+    // COLEÇÃO: scheduleBlocks (leitura pública, escrita pelo dono)
+    // ═══════════════════════════════════════════════════════
+    match /scheduleBlocks/{blockId} {
+      allow read: if true;
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: appointments (APENAS via API /api/book)
+    // ═══════════════════════════════════════════════════════
+    match /appointments/{appointmentId} {
+      // Bloquear criação pública direta - apenas via API segura
+      allow create: if false;
+
+      // Leitura: profissional dono OU cliente (via token temporário)
+      allow read: if request.auth != null && 
+        (request.auth.uid == resource.data.userId || 
+         request.auth.uid == resource.data.clientId);
+
+      // Atualização: apenas pelo profissional dono
+      allow update: if request.auth != null && 
+        request.auth.uid == resource.data.userId &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'notes', 'reminderSent', 'cancelledAt', 'cancelledBy', 'updatedAt']);
+
+      // Deleção: apenas pelo profissional dono
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: subscriptions (apenas leitura pelo dono, escrita via webhook)
     // ═══════════════════════════════════════════════════════
     match /subscriptions/{subscriptionId} {
-      // Apenas o dono pode ler sua assinatura
       allow read: if request.auth != null && resource.data.userId == request.auth.uid;
-      // Escrita apenas pelo sistema (webhooks Stripe)
-      allow write: if false;
+      allow write: if false; // Apenas via webhooks Stripe (Cloud Functions)
     }
 
   }
