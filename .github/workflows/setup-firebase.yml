@@ -19,9 +19,13 @@ jobs:
         run: |
           pip install firebase-admin
 
-      - name: Setup Firebase from Service Account
+      - name: Save Service Account Key
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
-          echo "$SERVICE_ACCOUNT_JSON" > /tmp/service-account.json
+          echo "$SERVICE_ACCOUNT_JSON" > agendafacil-pro-firebase-adminsdk-fbsvc-26027d73d1.json
+          echo "✅ Service account key saved"
+
+      - name: Setup Firebase
+        run: |
           python setup_firebase.py
