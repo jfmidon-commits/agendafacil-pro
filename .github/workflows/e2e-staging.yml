@@ -31,6 +31,7 @@ jobs:
         env:
           RUN_STAGING_E2E: '1'
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           NEXT_PUBLIC_APP_URL: https://agendafacil-staging-pearl.vercel.app
           NEXT_PUBLIC_APP_URL_STAGING: https://agendafacil-staging-pearl.vercel.app
