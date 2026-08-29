@@ -2,6 +2,11 @@ name: 🚀 Deploy Staging Fixed
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/deploy-staging-fixed.yml'
 
 jobs:
   deploy:
