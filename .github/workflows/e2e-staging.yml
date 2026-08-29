@@ -1,0 +1,41 @@
+name: 🧪 Staging E2E Double Booking
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'web/lib/domain/**'
+      - 'web/app/api/**'
+      - 'web/supabase/migrations/**'
+      - '.github/workflows/e2e-staging.yml'
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  e2e:
+    name: E2E Double Booking Test
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: ⚡ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ./web/package-lock.json
+
+      - name: 📦 Install dependencies
+        run: cd web && npm ci
+
+      - name: 🧪 Run E2E Test
+        run: cd web && npx vitest run lib/domain/booking.e2e.test.ts
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL_STAGING }}
+          NEXT_PUBLIC_APP_URL_STAGING: ${{ secrets.NEXT_PUBLIC_APP_URL_STAGING }}
