@@ -2,13 +2,19 @@ name: 🧪 Staging E2E Public Booking
 
 on:
   workflow_dispatch:
+    inputs:
+      run_signup_ui:
+        description: "Executar também o signup real pela UI (pode consumir limite de e-mail do Supabase)"
+        required: false
+        default: false
+        type: boolean
   workflow_run:
     workflows: ["🚀 Deploy Staging Fixed"]
     types: [completed]
 
 jobs:
   e2e:
-    name: E2E Public Booking Test
+    name: E2E Staging — API + Professional UI
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment: staging
@@ -26,7 +32,7 @@ jobs:
       - name: 📦 Install dependencies
         run: cd web && npm install --no-audit --no-fund
 
-      - name: 🧪 Run E2E Tests
+      - name: 🧪 Run API/domain E2E tests
         run: cd web && npx vitest run lib/domain/*.e2e.test.ts
         env:
           RUN_STAGING_E2E: '1'
@@ -35,3 +41,37 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           NEXT_PUBLIC_APP_URL: https://agendafacil-staging-pearl.vercel.app
           NEXT_PUBLIC_APP_URL_STAGING: https://agendafacil-staging-pearl.vercel.app
+
+      - name: 🎭 Install Playwright Chromium
+        run: cd web && npx playwright install --with-deps chromium
+
+      - name: 📱 Run professional UI E2E
+        run: cd web && npx playwright test e2e/professional-flow.spec.ts
+        env:
+          RUN_STAGING_E2E: '1'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_APP_URL: https://agendafacil-staging-pearl.vercel.app
+          NEXT_PUBLIC_APP_URL_STAGING: https://agendafacil-staging-pearl.vercel.app
+
+      - name: ✉️ Run real signup UI smoke
+        if: github.event_name == 'workflow_dispatch' && inputs.run_signup_ui
+        run: cd web && npx playwright test e2e/signup-smoke.spec.ts
+        env:
+          RUN_STAGING_E2E: '1'
+          RUN_SIGNUP_UI_E2E: '1'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_APP_URL: https://agendafacil-staging-pearl.vercel.app
+          NEXT_PUBLIC_APP_URL_STAGING: https://agendafacil-staging-pearl.vercel.app
+
+      - name: 📎 Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-diagnostics-${{ github.run_id }}
+          path: |
+            web/playwright-report/
+            web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
