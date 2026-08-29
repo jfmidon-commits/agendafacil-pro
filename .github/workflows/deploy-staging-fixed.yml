@@ -48,59 +48,64 @@ jobs:
           APP_URL_VALUE: https://agendafacil-staging-pearl.vercel.app
         run: |
           set -euo pipefail
+          node <<'NODE'
+          const cronSecret = (process.env.CRON_SECRET_VALUE || '').replace(/[\r\n]/g, '');
+          const appUrl = (process.env.APP_URL_VALUE || '').replace(/[\r\n]/g, '');
+          const projectId = process.env.VERCEL_PROJECT_ID || '';
+          const teamId = process.env.VERCEL_ORG_ID || '';
+          const token = process.env.VERCEL_TOKEN || '';
 
-          sync_env() {
-            name="$1"
-            value="$(printf '%s' "$2" | tr -d '\r\n')"
-
-            if [ -z "$value" ]; then
-              echo "::error::Source value for ${name} is unavailable after normalization."
-              exit 1
-            fi
-
-            if printf '%s' "$value" | npx --yes vercel@latest env update "$name" production --token="$VERCEL_TOKEN" >/tmp/vercel-env.log 2>&1; then
-              echo "${name} updated in Vercel production environment."
-              return
-            fi
-
-            if printf '%s' "$value" | npx --yes vercel@latest env add "$name" production --token="$VERCEL_TOKEN" >/tmp/vercel-env.log 2>&1; then
-              echo "${name} added to Vercel production environment."
-              return
-            fi
-
-            cat /tmp/vercel-env.log
-            echo "::error::Could not synchronize ${name} with Vercel."
-            exit 1
-          }
-
-          sync_env CRON_SECRET "$CRON_SECRET_VALUE"
-          sync_env NEXT_PUBLIC_APP_URL "$APP_URL_VALUE"
-
-          npx --yes vercel@latest env pull /tmp/vercel-production.env --environment=production --yes --token="$VERCEL_TOKEN" >/tmp/vercel-env-pull.log 2>&1
-
-          CRON_SECRET_VALUE="$CRON_SECRET_VALUE" node <<'NODE'
-          const fs = require('fs');
-          const text = fs.readFileSync('/tmp/vercel-production.env', 'utf8');
-
-          function readEnv(name) {
-            const line = text.split(/\r?\n/).find((item) => item.startsWith(`${name}=`));
-            if (!line) return null;
-            const raw = line.slice(name.length + 1);
-            if (raw.startsWith('"')) {
-              try { return JSON.parse(raw); } catch { return raw.slice(1, -1); }
-            }
-            return raw;
-          }
-
-          const expected = (process.env.CRON_SECRET_VALUE || '').replace(/[\r\n]/g, '');
-          const actual = (readEnv('CRON_SECRET') || '').replace(/[\r\n]/g, '');
-
-          if (!expected || !actual || expected !== actual) {
-            console.error('CRON_SECRET production value does not match the normalized GitHub source.');
+          if (!cronSecret || !appUrl || !projectId || !teamId || !token) {
+            console.error('Required Vercel synchronization input is unavailable.');
             process.exit(1);
           }
 
-          console.log('CRON_SECRET production value verified without exposing the secret.');
+          const endpoint = new URL(`https://api.vercel.com/v10/projects/${encodeURIComponent(projectId)}/env`);
+          endpoint.searchParams.set('upsert', 'true');
+          endpoint.searchParams.set('teamId', teamId);
+
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify([
+              {
+                key: 'CRON_SECRET',
+                value: cronSecret,
+                type: 'sensitive',
+                target: ['production'],
+                comment: 'Synced by AgendaFacil staging deploy',
+              },
+              {
+                key: 'NEXT_PUBLIC_APP_URL',
+                value: appUrl,
+                type: 'plain',
+                target: ['production'],
+                comment: 'Canonical AgendaFacil staging URL',
+              },
+            ]),
+          });
+
+          let result = null;
+          try {
+            result = await response.json();
+          } catch {}
+
+          if (!response.ok) {
+            console.error(`Vercel environment upsert failed with HTTP ${response.status}.`);
+            process.exit(1);
+          }
+
+          const failed = Array.isArray(result?.failed) ? result.failed : [];
+          if (failed.length) {
+            const keys = failed.map((item) => item?.key || 'unknown').join(', ');
+            console.error(`Vercel rejected environment variables: ${keys}`);
+            process.exit(1);
+          }
+
+          console.log('Required Vercel production environment variables were upserted successfully.');
           NODE
 
       - name: 🚀 Deploy to Vercel
