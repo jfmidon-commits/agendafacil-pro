@@ -2,5 +2,42 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getPriceId, getStripe } from "@/lib/stripe";
-const schema=z.object({plan:z.enum(["pro","pro-annual","studio"])});
-export async function POST(request:Request){const parsed=schema.safeParse(await request.json().catch(()=>null));if(!parsed.success)return NextResponse.json({error:"Plano inválido"},{status:400});const supabase=await createClient();const {data:{user}}=await supabase.auth.getUser();if(!user)return NextResponse.json({error:"unauthorized"},{status:401});const {data:sub}=await supabase.from("subscriptions").select("stripe_subscription_id").eq("user_id",user.id).single();if(!sub)return NextResponse.json({error:"Assinatura ativa não encontrada"},{status:404});const stripe=getStripe();const stripeSub=await stripe.subscriptions.retrieve(sub.stripe_subscription_id);const item=stripeSub.items.data[0];if(!item)return NextResponse.json({error:"Item de assinatura não encontrado"},{status:409});await stripe.subscriptions.update(stripeSub.id,{items:[{id:item.id,price:getPriceId(parsed.data.plan)}],proration_behavior:"create_prorations",metadata:{...stripeSub.metadata,user_id:user.id,plan:parsed.data.plan}});return NextResponse.json({success:true});}
+
+const schema = z.object({ plan: z.enum(["pro", "pro-annual"]) });
+
+export async function POST(request: Request) {
+  const parsed = schema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: "Plano inválido" }, { status: 400 });
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const { data: sub } = await supabase
+    .from("subscriptions")
+    .select("stripe_subscription_id")
+    .eq("user_id", user.id)
+    .single();
+  if (!sub) return NextResponse.json({ error: "Assinatura ativa não encontrada" }, { status: 404 });
+
+  try {
+    const stripe = getStripe();
+    const stripeSub = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
+    const item = stripeSub.items.data[0];
+    if (!item) return NextResponse.json({ error: "Item de assinatura não encontrado" }, { status: 409 });
+
+    const priceId = await getPriceId(parsed.data.plan);
+    await stripe.subscriptions.update(stripeSub.id, {
+      items: [{ id: item.id, price: priceId }],
+      proration_behavior: "create_prorations",
+      metadata: { ...stripeSub.metadata, user_id: user.id, plan: parsed.data.plan },
+    });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("stripe_change_plan_failed", error instanceof Error ? error.message : error);
+    return NextResponse.json(
+      { error: "Não foi possível alterar o plano agora. Tente novamente mais tarde." },
+      { status: 503 },
+    );
+  }
+}
