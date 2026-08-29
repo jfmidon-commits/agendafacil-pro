@@ -1,0 +1,7 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { verifyCancelToken } from "@/lib/cancel-token";
+import { createServiceClient } from "@/lib/supabase/service";
+
+const schema=z.object({token:z.string().min(20).max(500)});
+export async function POST(request:Request){const parsed=schema.safeParse(await request.json().catch(()=>null));if(!parsed.success)return NextResponse.json({error:"Token inválido"},{status:400});const verified=verifyCancelToken(parsed.data.token);if(!verified)return NextResponse.json({error:"Link inválido ou expirado"},{status:400});const supabase=createServiceClient();const {data:appointment,error}=await supabase.from("appointments").select("id,status,starts_at").eq("id",verified.appointmentId).single();if(error||!appointment)return NextResponse.json({error:"Agendamento não encontrado"},{status:404});if(appointment.status!=="confirmed")return NextResponse.json({error:"Este agendamento não está mais ativo"},{status:409});if(new Date(appointment.starts_at)<=new Date())return NextResponse.json({error:"O horário do agendamento já começou"},{status:409});const {error:updateError}=await supabase.from("appointments").update({status:"cancelled",cancelled_at:new Date().toISOString(),cancelled_by:"client"}).eq("id",appointment.id).eq("status","confirmed");if(updateError)return NextResponse.json({error:"Não foi possível cancelar"},{status:500});await supabase.from("integration_events").insert({appointment_id:appointment.id,event_type:"appointment.cancelled"});return NextResponse.json({success:true});}

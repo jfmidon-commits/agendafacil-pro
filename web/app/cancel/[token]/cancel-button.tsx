@@ -1,0 +1,3 @@
+"use client";
+import { useState } from "react";
+export default function CancelButton({token}:{token:string}){const [state,setState]=useState("");const [loading,setLoading]=useState(false);async function cancel(){setLoading(true);const r=await fetch("/api/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token})});const j=await r.json();setState(r.ok?"Agendamento cancelado com sucesso.":j.error||"Não foi possível cancelar.");setLoading(false);}return <div className="stack"><button className="danger" onClick={cancel} disabled={loading}>{loading?"Cancelando...":"Confirmar cancelamento"}</button>{state&&<p className={state.includes("sucesso")?"success":"error"}>{state}</p>}</div>;}
