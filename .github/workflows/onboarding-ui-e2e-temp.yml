@@ -1,0 +1,225 @@
+name: 🧭 Onboarding UI E2E Temporary
+
+on:
+  push:
+    branches:
+      - test/onboarding-ui-e2e
+    paths:
+      - '.github/workflows/onboarding-ui-e2e-temp.yml'
+
+jobs:
+  onboarding-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_URL: https://agendafacil-staging-pearl.vercel.app
+      SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - name: Guard staging target and secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$APP_URL" == *staging* ]] || { echo 'Refusing non-staging target'; exit 1; }
+          test -n "$SUPABASE_URL"
+          test -n "$SERVICE_KEY"
+
+      - name: Install Playwright
+        shell: bash
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Run real signup → login → onboarding → booking flow
+        shell: bash
+        run: |
+          cat > /tmp/onboarding-e2e.mjs <<'NODE'
+          import { chromium } from 'playwright';
+          import { randomUUID } from 'node:crypto';
+
+          const APP_URL = process.env.APP_URL;
+          const SUPABASE_URL = process.env.SUPABASE_URL;
+          const SERVICE_KEY = process.env.SERVICE_KEY;
+          if (!APP_URL.includes('staging')) throw new Error(`Unsafe APP_URL: ${APP_URL}`);
+          if (!SUPABASE_URL || !SERVICE_KEY) throw new Error('Missing staging credentials');
+
+          const id = randomUUID().slice(0, 8);
+          const email = `ui-e2e-${id}@agendafacil.test`;
+          const password = `UiE2E-${randomUUID()}-Aa1!`;
+          const slug = `barbearia-ui-${id}`;
+          const business = `Barbearia UI ${id}`;
+          let userId = '';
+          let browser;
+
+          const adminHeaders = {
+            apikey: SERVICE_KEY,
+            Authorization: `Bearer ${SERVICE_KEY}`,
+            'Content-Type': 'application/json',
+          };
+
+          async function admin(path, options = {}) {
+            return fetch(`${SUPABASE_URL}${path}`, {
+              ...options,
+              headers: { ...adminHeaders, ...(options.headers || {}) },
+            });
+          }
+
+          async function findUser() {
+            for (let i = 0; i < 12; i += 1) {
+              const res = await admin('/auth/v1/admin/users?page=1&per_page=1000');
+              if (!res.ok) throw new Error(`Admin list users failed: ${res.status}`);
+              const body = await res.json();
+              const found = (body.users || []).find((user) => user.email === email);
+              if (found) return found;
+              await new Promise((resolve) => setTimeout(resolve, 500));
+            }
+            throw new Error('Signup UI did not create the Auth user');
+          }
+
+          function nextMonday() {
+            const date = new Date();
+            let delta = (1 - date.getUTCDay() + 7) % 7;
+            if (delta === 0) delta = 7;
+            date.setUTCDate(date.getUTCDate() + delta);
+            return date.toISOString().slice(0, 10);
+          }
+
+          async function cleanup() {
+            if (!userId) return;
+            const response = await admin(`/auth/v1/admin/users/${userId}`, { method: 'DELETE' });
+            if (!response.ok && response.status !== 404) {
+              console.error(`Cleanup Auth user failed: ${response.status}`);
+            }
+          }
+
+          try {
+            browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+            const page = await context.newPage();
+            const consoleErrors = [];
+            page.on('console', (msg) => {
+              if (msg.type() === 'error') consoleErrors.push(msg.text());
+            });
+
+            // 1) Signup real pela UI.
+            await page.goto(`${APP_URL}/signup`, { waitUntil: 'networkidle' });
+            await page.locator('input[name="name"]').fill('Barbeiro UI E2E');
+            await page.locator('input[name="phone"]').fill('51999990000');
+            await page.locator('input[name="email"]').fill(email);
+            await page.locator('input[name="password"]').fill(password);
+            await page.getByRole('button', { name: 'Criar conta' }).click();
+            await page.waitForTimeout(1500);
+
+            const authUser = await findUser();
+            userId = authUser.id;
+            console.log('✓ Signup UI created Auth user');
+
+            // Se confirmação de e-mail estiver ativa, confirmar pelo Admin para prosseguir no E2E.
+            if (!authUser.email_confirmed_at) {
+              const confirm = await admin(`/auth/v1/admin/users/${userId}`, {
+                method: 'PUT',
+                body: JSON.stringify({ email_confirm: true }),
+              });
+              if (!confirm.ok) throw new Error(`Admin email confirmation failed: ${confirm.status} ${await confirm.text()}`);
+              console.log('✓ Email confirmation requirement handled for test user');
+            }
+
+            // 2) Login real pela UI, sempre em sessão limpa.
+            await context.clearCookies();
+            await page.goto(`${APP_URL}/login?next=/onboarding`, { waitUntil: 'networkidle' });
+            await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+            await page.reload({ waitUntil: 'networkidle' });
+            await page.locator('input[name="email"]').fill(email);
+            await page.locator('input[name="password"]').fill(password);
+            await page.getByRole('button', { name: 'Entrar' }).click();
+            await page.waitForURL(/\/onboarding(?:\?|$)/, { timeout: 15000 });
+            console.log('✓ Login UI redirected to onboarding');
+
+            // 3) Onboarding publicado: defaults e grupos reais.
+            await page.getByRole('heading', { name: 'Seu link em poucos passos' }).waitFor();
+            await page.getByText('Grupo 1', { exact: true }).waitFor();
+            await page.getByText('Grupo 2', { exact: true }).waitFor();
+            const defaults = JSON.parse(await page.locator('input[name="scheduleJson"]').inputValue());
+            if (defaults.length !== 2) throw new Error(`Expected 2 default schedule groups, got ${defaults.length}`);
+            if (JSON.stringify(defaults[0].days) !== JSON.stringify([1,2,3,4,5]) || defaults[0].startTime !== '09:00' || defaults[0].endTime !== '18:00') {
+              throw new Error(`Unexpected weekday defaults: ${JSON.stringify(defaults[0])}`);
+            }
+            if (JSON.stringify(defaults[1].days) !== JSON.stringify([6]) || defaults[1].startTime !== '09:00' || defaults[1].endTime !== '14:00') {
+              throw new Error(`Unexpected Saturday defaults: ${JSON.stringify(defaults[1])}`);
+            }
+            console.log('✓ UI exposes Seg–Sex 09–18 + Sáb 09–14 as separate groups');
+
+            await page.locator('input[name="businessName"]').fill(business);
+            await page.locator('input[name="slug"]').fill(slug);
+            await page.locator('input[name="serviceName"]').fill('Corte');
+            await page.locator('input[name="duration"]').fill('30');
+            await page.locator('input[name="price"]').fill('35.00');
+            await page.locator('select[name="slotInterval"]').selectOption('30');
+            await page.getByText(`${APP_URL.replace(/\/$/, '')}/${slug}`, { exact: false }).waitFor();
+            await page.getByRole('button', { name: 'Salvar e abrir meu painel' }).click();
+            await page.waitForURL(/\/dashboard(?:\?|$)/, { timeout: 15000 });
+            await page.getByRole('heading', { name: business }).waitFor();
+            console.log('✓ Onboarding UI saved and redirected to dashboard');
+
+            // 4) Conferência direta no banco após o submit da UI.
+            const [profileRes, serviceRes, rulesRes, subscriptionRes] = await Promise.all([
+              admin(`/rest/v1/public_profiles?user_id=eq.${userId}&select=business_name,slug`),
+              admin(`/rest/v1/services?user_id=eq.${userId}&active=eq.true&select=id,name,duration_minutes,price_cents`),
+              admin(`/rest/v1/availability_rules?user_id=eq.${userId}&active=eq.true&select=day_of_week,start_time,end_time,slot_interval_minutes&order=day_of_week.asc`),
+              admin(`/rest/v1/subscriptions?user_id=eq.${userId}&select=id`),
+            ]);
+            const profileRows = await profileRes.json();
+            const serviceRows = await serviceRes.json();
+            const ruleRows = await rulesRes.json();
+            const subscriptionRows = await subscriptionRes.json();
+            if (profileRows.length !== 1 || profileRows[0].slug !== slug || profileRows[0].business_name !== business) throw new Error('Public profile did not persist correctly');
+            if (serviceRows.length !== 1 || serviceRows[0].name !== 'Corte' || serviceRows[0].duration_minutes !== 30 || serviceRows[0].price_cents !== 3500) throw new Error('Service did not persist correctly');
+            if (ruleRows.length !== 6) throw new Error(`Expected 6 availability rules, got ${ruleRows.length}`);
+            if (subscriptionRows.length !== 0) throw new Error('Onboarding incorrectly created a paid subscription');
+            console.log('✓ DB: profile + 1 service + 6 rules + 0 subscriptions');
+
+            // 5) Link público e reserva pela UI.
+            await page.goto(`${APP_URL}/${slug}`, { waitUntil: 'networkidle' });
+            await page.getByRole('heading', { name: business }).waitFor();
+            await page.locator('input[type="date"]').fill(nextMonday());
+            const firstSlot = page.locator('.slot-grid button').first();
+            await firstSlot.waitFor({ state: 'visible', timeout: 15000 });
+            await firstSlot.click();
+            await page.locator('input[name="name"]').fill('Cliente UI E2E');
+            await page.locator('input[name="phone"]').fill('51988887777');
+            await page.locator('input[name="email"]').fill(`cliente-${id}@example.com`);
+            await page.getByRole('button', { name: 'Confirmar agendamento' }).click();
+            await page.getByRole('heading', { name: /Agendamento confirmado/ }).waitFor({ timeout: 15000 });
+            console.log('✓ Public booking UI created appointment');
+
+            // 6) Dashboard mostra o cliente criado.
+            await page.goto(`${APP_URL}/dashboard`, { waitUntil: 'networkidle' });
+            await page.getByText('Cliente UI E2E', { exact: true }).waitFor({ timeout: 15000 });
+            const appointmentRes = await admin(`/rest/v1/appointments?user_id=eq.${userId}&client_email=eq.cliente-${id}%40example.com&select=id,status`);
+            const appointmentRows = await appointmentRes.json();
+            if (appointmentRows.length !== 1 || appointmentRows[0].status !== 'confirmed') throw new Error(`Expected one confirmed appointment, got ${JSON.stringify(appointmentRows)}`);
+            console.log('✓ Dashboard and DB show exactly one confirmed appointment');
+
+            if (consoleErrors.length) {
+              console.log(`Browser console errors observed: ${consoleErrors.length}`);
+              consoleErrors.slice(0, 5).forEach((entry) => console.log(`console.error: ${entry}`));
+            }
+          } finally {
+            if (browser) await browser.close();
+            await cleanup();
+
+            if (userId) {
+              const [profileCheck, appointmentCheck] = await Promise.all([
+                admin(`/rest/v1/profiles?id=eq.${userId}&select=id`),
+                admin(`/rest/v1/appointments?user_id=eq.${userId}&select=id`),
+              ]);
+              const profiles = await profileCheck.json();
+              const appointments = await appointmentCheck.json();
+              if (profiles.length !== 0 || appointments.length !== 0) {
+                throw new Error(`Cleanup incomplete: profiles=${profiles.length}, appointments=${appointments.length}`);
+              }
+              console.log('✓ Cleanup complete: Auth cascade removed test data');
+            }
+          }
+          NODE
+          node /tmp/onboarding-e2e.mjs
