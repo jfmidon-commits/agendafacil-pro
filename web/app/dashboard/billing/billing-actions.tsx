@@ -1,4 +1,87 @@
 "use client";
+
 import { useState } from "react";
-async function post(path:string,body?:unknown){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});const j=await r.json();if(!r.ok)throw new Error(j.error||"Falha");return j;}
-export default function BillingActions({hasSubscription}:{hasSubscription:boolean}){const [error,setError]=useState("");const [loading,setLoading]=useState(false);async function checkout(plan:string){try{setLoading(true);setError("");const j=await post("/api/stripe/checkout",{plan});window.location.href=j.url;}catch(e){setError(e instanceof Error?e.message:"Falha");setLoading(false);}}async function portal(){try{setLoading(true);const j=await post("/api/stripe/portal");window.location.href=j.url;}catch(e){setError(e instanceof Error?e.message:"Falha");setLoading(false);}}async function change(plan:string){try{setLoading(true);setError("");await post("/api/stripe/change-plan",{plan});window.location.reload();}catch(e){setError(e instanceof Error?e.message:"Falha");setLoading(false);}}return <div className="stack">{!hasSubscription?<div className="grid"><button disabled={loading} onClick={()=>checkout("pro")}>Pro · R$39/mês</button><button disabled={loading} onClick={()=>checkout("pro-annual")}>Pro anual · R$348/ano</button><button disabled={loading} onClick={()=>checkout("studio")}>Studio · R$79/mês</button></div>:<><div className="row"><button disabled={loading} onClick={()=>change("pro")}>Trocar para Pro</button><button disabled={loading} onClick={()=>change("studio")}>Trocar para Studio</button><button className="secondary" disabled={loading} onClick={portal}>Gerenciar/cancelar no Stripe</button></div></>}{error&&<p className="error">{error}</p>}</div>;}
+
+type ProCheckoutPlan = "pro" | "pro-annual";
+
+async function post(path: string, body?: unknown) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const json = await response.json().catch(() => ({ error: "Falha inesperada" }));
+  if (!response.ok) throw new Error(json.error || "Falha");
+  return json;
+}
+
+export default function BillingActions({ hasSubscription }: { hasSubscription: boolean }) {
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function checkout(plan: ProCheckoutPlan) {
+    try {
+      setLoading(true);
+      setError("");
+      const result = await post("/api/stripe/checkout", { plan });
+      window.location.href = result.url;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Falha");
+      setLoading(false);
+    }
+  }
+
+  async function portal() {
+    try {
+      setLoading(true);
+      setError("");
+      const result = await post("/api/stripe/portal");
+      window.location.href = result.url;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Falha");
+      setLoading(false);
+    }
+  }
+
+  async function change(plan: ProCheckoutPlan) {
+    try {
+      setLoading(true);
+      setError("");
+      await post("/api/stripe/change-plan", { plan });
+      window.location.reload();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Falha");
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="stack">
+      {!hasSubscription ? (
+        <div className="grid">
+          <button disabled={loading} onClick={() => checkout("pro")}>
+            Pro · R$39/mês
+          </button>
+          <button disabled={loading} onClick={() => checkout("pro-annual")}>
+            Pro anual · R$348/ano
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="row">
+            <button disabled={loading} onClick={() => change("pro")}>
+              Pro mensal
+            </button>
+            <button disabled={loading} onClick={() => change("pro-annual")}>
+              Pro anual
+            </button>
+            <button className="secondary" disabled={loading} onClick={portal}>
+              Gerenciar/cancelar no Stripe
+            </button>
+          </div>
+        </>
+      )}
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
