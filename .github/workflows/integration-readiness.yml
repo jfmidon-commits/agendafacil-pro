@@ -11,7 +11,6 @@ jobs:
     name: Check Make and Stripe configuration
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    environment: staging
     steps:
       - name: 🔎 Probe protected readiness endpoint
         env:
