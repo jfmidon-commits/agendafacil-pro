@@ -1,0 +1,41 @@
+name: 🚀 Deploy Staging Fixed
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: ⚡ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Install dependencies
+        run: |
+          cd web
+          npm ci
+
+      - name: 🏗️ Build
+        run: |
+          cd web
+          npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          CANCEL_SIGNING_SECRET: ${{ secrets.CANCEL_SIGNING_SECRET }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      - name: 🚀 Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: ./web
+          vercel-args: '--prod'
