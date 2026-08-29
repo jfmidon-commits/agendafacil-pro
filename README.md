@@ -5,21 +5,38 @@
 
 ---
 
+## 📊 Status dos Sprints
+
+| Sprint | Foco | Status | Progresso |
+|--------|------|--------|-----------|
+| **Sprint 0** | Segurança + Banco de Dados | ✅ Concluído | 100% |
+| **Sprint 1** | Motor de Disponibilidade + Fluxo | 🚧 Em andamento | 80% |
+| **Sprint 2** | WhatsApp + Stripe | 🚧 Em andamento | 60% |
+| **Sprint 3** | Planos + Trial | ⏳ Pendente | 0% |
+| **Sprint 4** | Landing Page + Beta | ⏳ Pendente | 0% |
+
+---
+
 ## 📁 Estrutura do Repositório
 
 ```
 agendafacil-pro/
-├── README.md                    # Este arquivo
-├── .gitignore                   # Ignora credenciais e arquivos sensíveis
-├── setup_firebase.py            # Script de setup do banco de dados
-├── firestore_rules.txt          # Regras de segurança do Firestore
-├── data_structure.json          # Documentação da estrutura de dados
-├── api_book.py                  # Cloud Function: API de agendamento segura
-├── availability_engine.py       # Motor de disponibilidade
-├── stripe_webhooks.py           # Handler de webhooks do Stripe
-├── plan_limits.py               # Verificador de limites de plano
-├── flutterflow_guide.md         # Guia de configuração do FlutterFlow
-└── make_automation_guide.md     # Guia de automações no Make
+├── README.md                          # Este arquivo
+├── .gitignore                         # Ignora credenciais
+├── setup_firebase.py                  # Setup do banco v2.0
+├── firestore_rules.txt               # Regras de segurança
+├── data_structure.json               # Documentação do banco
+├── api_book.py                       # API de agendamento segura
+├── availability_engine.py            # Motor de disponibilidade
+├── stripe_webhooks.py                # Handler Stripe completo
+├── plan_limits.py                    # Verificador de limites
+├── flutterflow_guide.md              # Guia FlutterFlow geral
+├── make_automation_guide.md          # Guia Make geral
+├── docs/
+│   ├── flutterflow_sprint1.md       # Telas do fluxo vertical slice
+│   └── make_automation_sprint2.md   # Automações WhatsApp/Stripe
+└── .github/workflows/
+    └── setup-firebase.yml            # CI/CD para setup
 ```
 
 ---
@@ -35,20 +52,6 @@ agendafacil-pro/
 | **Pagamentos** | Stripe |
 | **Automações** | Make (ex-Integromat) + WhatsApp API |
 | **Banco de Dados** | Firestore (NoSQL) |
-
-### Decisão de Arquitetura
-> **FlutterFlow para MVP rápido** (Sprints 0-4). Avaliação de migração para **Next.js + Supabase** após validação do produto.
-
-**Prós do FlutterFlow:**
-- ✅ Desenvolvimento rápido (sem código)
-- ✅ Integração nativa com Firebase
-- ✅ Deploy automático
-
-**Contras (documentados para migração futura):**
-- ⚠️ Controle limitado de versão
-- ⚠️ Dificuldade em testes automatizados
-- ⚠️ Lock-in na plataforma
-- ⚠️ Customizações complexas exigem código nativo
 
 ---
 
@@ -66,14 +69,6 @@ agendafacil-pro/
 | `appointments` | Privado | Apenas via API `/api/book` |
 | `subscriptions` | Privado | Apenas webhooks Stripe |
 
-### Campos Principais
-
-**appointments (v2.0):**
-- `startsAt` / `endsAt` (timestamps com timezone)
-- `serviceDuration` + `bufferBefore` + `bufferAfter` = `totalDuration`
-- `timezone`: `'America/Sao_Paulo'`
-- `cancelledAt` / `cancelledBy`: rastreamento de cancelamentos
-
 ---
 
 ## 🔒 Segurança
@@ -83,24 +78,6 @@ agendafacil-pro/
 - **Dados públicos** (`publicProfiles`, `services`): leitura aberta
 - **Agendamentos**: criação **BLOQUEADA** diretamente; apenas via API `/api/book`
 - **Transações atômicas**: prevenção de race conditions e dupla reserva
-
-### API Segura `/api/book`
-```
-POST /api/book
-{
-  "userId": "profissional-id",
-  "serviceId": "servico-id",
-  "clientName": "João",
-  "clientPhone": "+5511988888888",
-  "startsAt": "2026-08-29T14:00:00-03:00"
-}
-```
-
-Validações:
-- ✅ Disponibilidade do horário
-- ✅ Conflito com agendamentos existentes
-- ✅ Conflito com bloqueios (scheduleBlocks)
-- ✅ Operação atômica (transação Firestore)
 
 ---
 
@@ -137,6 +114,7 @@ Validações:
 2. **Lembrete** → Dia anterior ao agendamento (calculado a partir de `startsAt`)
 3. **Trial expirando** → Alerta por e-mail 4 dias antes
 4. **Falha de pagamento** → Alerta WhatsApp para atualizar cartão
+5. **Cancelamento** → Notificação ao profissional
 
 ---
 
@@ -159,25 +137,13 @@ gcloud functions deploy stripe_webhooks --runtime python311 --trigger-http --all
 
 ### 3. Configurar Stripe
 1. Criar produtos: Pro (R$39/mês), Pro Anual (R$348/ano), Studio (R$79/mês)
-2. Configurar webhook URL: `https://sua-regiao-sua-funcao.cloudfunctions.net/stripe_webhooks`
+2. Configurar webhook URL
 3. Adicionar `STRIPE_WEBHOOK_SECRET` nas variáveis de ambiente
 
 ### 4. FlutterFlow
 1. Conectar ao Firebase
-2. Importar tema e componentes
+2. Seguir guia em `docs/flutterflow_sprint1.md`
 3. Publicar no Firebase Hosting
-
----
-
-## 📋 Backlog por Sprints
-
-| Sprint | Foco | Status |
-|--------|------|--------|
-| **Sprint 0** | Segurança + Banco de Dados | 🚧 Em andamento |
-| **Sprint 1** | Motor de Disponibilidade + Fluxo | ⏳ Pendente |
-| **Sprint 2** | WhatsApp + Stripe | ⏳ Pendente |
-| **Sprint 3** | Planos + Trial | ⏳ Pendente |
-| **Sprint 4** | Landing Page + Beta | ⏳ Pendente |
 
 ---
 
