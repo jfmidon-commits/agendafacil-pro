@@ -38,6 +38,44 @@ jobs:
           CANCEL_SIGNING_SECRET: ${{ secrets.CANCEL_SIGNING_SECRET }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
+      - name: 🔐 Sync required Vercel runtime env
+        working-directory: ./web
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          CRON_SECRET_VALUE: ${{ secrets.CRON_SECRET }}
+          APP_URL_VALUE: https://agendafacil-staging-pearl.vercel.app
+        run: |
+          set -euo pipefail
+
+          sync_env() {
+            name="$1"
+            value="$2"
+
+            if [ -z "$value" ]; then
+              echo "::error::Source value for ${name} is unavailable."
+              exit 1
+            fi
+
+            if printf '%s' "$value" | npx --yes vercel@latest env update "$name" production --token="$VERCEL_TOKEN" >/tmp/vercel-env.log 2>&1; then
+              echo "${name} updated in Vercel production environment."
+              return
+            fi
+
+            if printf '%s' "$value" | npx --yes vercel@latest env add "$name" production --token="$VERCEL_TOKEN" >/tmp/vercel-env.log 2>&1; then
+              echo "${name} added to Vercel production environment."
+              return
+            fi
+
+            cat /tmp/vercel-env.log
+            echo "::error::Could not synchronize ${name} with Vercel."
+            exit 1
+          }
+
+          sync_env CRON_SECRET "$CRON_SECRET_VALUE"
+          sync_env NEXT_PUBLIC_APP_URL "$APP_URL_VALUE"
+
       - name: 🚀 Deploy to Vercel
         working-directory: ./web
         env:
