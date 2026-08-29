@@ -44,6 +44,7 @@ export default function SessionNav() {
       <Link href="/dashboard">Painel</Link>
       <Link href="/dashboard/services">Serviços</Link>
       <Link href="/dashboard/availability">Horários</Link>
+      <Link href="/dashboard/settings">Configurações</Link>
       <Link href="/dashboard/billing">Plano</Link>
       <button type="button" className="secondary" onClick={signOut}>Sair</button>
     </>
