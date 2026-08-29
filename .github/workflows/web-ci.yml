@@ -1,0 +1,36 @@
+name: Web CI
+on:
+  pull_request:
+    paths: ["web/**"]
+  push:
+    branches: [main]
+    paths: ["web/**"]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: test-service-role-key
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      CANCEL_SIGNING_SECRET: 0123456789012345678901234567890123456789
+      STRIPE_SECRET_KEY: sk_test_placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_placeholder
+      STRIPE_PRICE_PRO_MONTHLY: price_pro
+      STRIPE_PRICE_PRO_ANNUAL: price_pro_annual
+      STRIPE_PRICE_STUDIO_MONTHLY: price_studio
+      CRON_SECRET: ci-cron-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package.json
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
