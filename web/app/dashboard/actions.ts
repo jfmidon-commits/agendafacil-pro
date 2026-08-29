@@ -5,10 +5,9 @@ import { deliverIntegrationEvent } from "@/lib/integrations/make";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 
-export async function updateAppointmentStatus(
-  id: string,
-  status: "confirmed" | "cancelled" | "completed" | "no_show",
-) {
+type OwnerStatus = "cancelled" | "completed" | "no_show";
+
+export async function updateAppointmentStatus(id: string, status: OwnerStatus) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Não autenticado");
@@ -28,12 +27,16 @@ export async function updateAppointmentStatus(
     const eventId = data?.[0]?.integration_event_id;
     if (eventId) await deliverIntegrationEvent(eventId).catch(() => false);
   } else {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("appointments")
       .update({ status })
       .eq("id", id)
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .eq("status", "confirmed")
+      .select("id")
+      .maybeSingle();
     if (error) throw new Error(error.message);
+    if (!data) throw new Error("O agendamento não está mais ativo.");
   }
 
   revalidatePath("/dashboard");
