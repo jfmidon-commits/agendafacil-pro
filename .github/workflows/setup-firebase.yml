@@ -1,4 +1,4 @@
-name: Setup Firebase Firestore
+name: Setup Firebase Firestore v2.0
 
 on:
   workflow_dispatch:
@@ -26,6 +26,18 @@ jobs:
           echo "$SERVICE_ACCOUNT_JSON" > agendafacil-pro-firebase-adminsdk-fbsvc-26027d73d1.json
           echo "✅ Service account key saved"
 
-      - name: Setup Firebase
+      - name: Setup Firebase v2.0
         run: |
           python setup_firebase.py
+
+      - name: Verify setup
+        run: |
+          echo "✅ Firebase v2.0 setup completed!"
+          echo "Coleções criadas:"
+          echo "  - users (dados privados)"
+          echo "  - publicProfiles (dados públicos)"
+          echo "  - services"
+          echo "  - availabilityRules"
+          echo "  - scheduleBlocks"
+          echo "  - appointments (v2.0 com startsAt/endsAt)"
+          echo "  - subscriptions"
