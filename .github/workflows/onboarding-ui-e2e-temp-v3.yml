@@ -1,0 +1,29 @@
+name: 🧭 Onboarding UI E2E Temporary v3
+
+on:
+  push:
+    branches: [test/onboarding-ui-e2e]
+    paths: ['.github/workflows/onboarding-ui-e2e-temp-v3.yml']
+
+jobs:
+  onboarding-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_URL: https://agendafacil-staging-pearl.vercel.app
+      SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard staging
+        run: |
+          set -euo pipefail
+          [[ "$APP_URL" == *staging* ]]
+          test -n "$SUPABASE_URL"
+          test -n "$SERVICE_KEY"
+      - name: Install browser
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Exercise published UI
+        run: node .github/scripts/onboarding-ui-e2e.mjs
