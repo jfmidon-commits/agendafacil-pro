@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
- * E2E de staging — prevenção de double booking.
+ * E2E destrutivo de staging — fluxo público de agendamento.
  *
  * O CI comum NÃO executa este teste. Para rodar intencionalmente:
  * RUN_STAGING_E2E=1 + credenciais de staging.
@@ -32,8 +32,13 @@ const TEST_ID = crypto.randomUUID();
 const TEST_EMAIL = `e2e-${TEST_ID.slice(0, 8)}@agendafacil.test`;
 const TEST_SLUG = `barbearia-e2e-${TEST_ID.slice(0, 8)}`;
 
+type Slot = { starts_at: string; ends_at: string; label: string; timezone: string };
+type ApiError = { error?: string; code?: string };
+
 let userId = "";
 let serviceId = "";
+let bookedStartsAt = "";
+let cancelToken = "";
 
 async function waitForProfile(id: string) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -51,7 +56,34 @@ function tomorrowDate() {
   return date.toISOString().slice(0, 10);
 }
 
-describeE2E("E2E Staging — Double Booking", () => {
+async function getSlots(date = tomorrowDate()) {
+  const response = await fetch(
+    `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${serviceId}&date=${date}`,
+  );
+  const data = (await response.json()) as { slots?: Slot[] } & ApiError;
+  return { response, data, slots: data.slots || [] };
+}
+
+function bookingPayload(startsAt: string) {
+  return {
+    slug: TEST_SLUG,
+    serviceId,
+    startsAt,
+    clientName: "Cliente Teste",
+    clientPhone: "51988888888",
+    clientEmail: "cliente-e2e@example.com",
+  };
+}
+
+async function postBooking(startsAt: string) {
+  return fetch(`${STAGING_URL}/api/book`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(bookingPayload(startsAt)),
+  });
+}
+
+describeE2E("E2E Staging — Public Booking Hardening", () => {
   beforeAll(async () => {
     const createUser = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
       method: "POST",
@@ -118,7 +150,6 @@ describeE2E("E2E Staging — Double Booking", () => {
 
   afterAll(async () => {
     if (!userId) return;
-
     await fetch(`${SUPABASE_URL}/rest/v1/appointments?user_id=eq.${userId}`, { method: "DELETE", headers });
     await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, { method: "DELETE", headers });
   }, 30_000);
@@ -128,61 +159,201 @@ describeE2E("E2E Staging — Double Booking", () => {
     expect(serviceId).toBeTruthy();
   });
 
-  it("retorna slots disponíveis via API", async () => {
-    const response = await fetch(
-      `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${serviceId}&date=${tomorrowDate()}`,
+  it("mostra estado amigável para slug inexistente", async () => {
+    const response = await fetch(`${STAGING_URL}/barbearia-inexistente-${TEST_ID.slice(0, 8)}`);
+    expect(response.status).toBe(404);
+    expect(await response.text()).toContain("Link de agendamento indisponível");
+  });
+
+  it("não vaza erro interno para perfil ou serviço inexistente", async () => {
+    const invalidSlugResponse = await fetch(
+      `${STAGING_URL}/api/availability?slug=slug-inexistente&serviceId=${serviceId}&date=${tomorrowDate()}`,
     );
+    expect(invalidSlugResponse.status).toBe(404);
+    const invalidSlug = (await invalidSlugResponse.json()) as ApiError;
+    expect(invalidSlug.code).toBe("profile_not_found");
+    expect(invalidSlug.error).toBe("Profissional não encontrado.");
+
+    const invalidServiceResponse = await fetch(
+      `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${crypto.randomUUID()}&date=${tomorrowDate()}`,
+    );
+    expect(invalidServiceResponse.status).toBe(404);
+    const invalidService = (await invalidServiceResponse.json()) as ApiError;
+    expect(invalidService.code).toBe("service_not_found");
+  });
+
+  it("retorna apenas slots válidos", async () => {
+    const { response, slots } = await getSlots();
     expect(response.status).toBe(200);
-    const data = await response.json();
-    expect(Array.isArray(data.slots)).toBe(true);
-    expect(data.slots.length).toBeGreaterThan(0);
-    expect(data.slots[0].starts_at).toBeTruthy();
+    expect(slots.length).toBeGreaterThan(0);
+    expect(slots[0].starts_at).toBeTruthy();
+  });
+
+  it("rejeita horário dentro da janela mas fora da grade", async () => {
+    const { slots } = await getSlots();
+    const validStart = slots[0].starts_at;
+    const misaligned = new Date(new Date(validStart).getTime() + 7 * 60_000).toISOString();
+    const response = await postBooking(misaligned);
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as ApiError;
+    expect(body.code).toBe("slot_not_aligned");
+  });
+
+  it("respeita bloqueio de agenda na listagem e na reserva direta", async () => {
+    const { slots } = await getSlots();
+    const target = slots[0];
+    const blockResponse = await fetch(`${SUPABASE_URL}/rest/v1/schedule_blocks`, {
+      method: "POST",
+      headers: { ...headers, Prefer: "return=representation" },
+      body: JSON.stringify({
+        user_id: userId,
+        starts_at: target.starts_at,
+        ends_at: target.ends_at,
+        type: "blocked",
+        reason: "E2E",
+      }),
+    });
+    if (!blockResponse.ok) throw new Error(await blockResponse.text());
+    const blocks = (await blockResponse.json()) as { id: string }[];
+
+    try {
+      const afterBlock = await getSlots();
+      expect(afterBlock.slots.some((slot) => slot.starts_at === target.starts_at)).toBe(false);
+
+      const direct = await postBooking(target.starts_at);
+      expect(direct.status).toBe(409);
+      const body = (await direct.json()) as ApiError;
+      expect(body.code).toBe("schedule_block_conflict");
+    } finally {
+      await fetch(`${SUPABASE_URL}/rest/v1/schedule_blocks?id=eq.${blocks[0].id}`, {
+        method: "DELETE",
+        headers,
+      });
+    }
   });
 
   it("permite exatamente uma reserva concorrente (201 + 409)", async () => {
-    const date = tomorrowDate();
-    const availability = await fetch(
-      `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${serviceId}&date=${date}`,
-    );
-    const availabilityData = await availability.json();
-    const startsAt = availabilityData.slots?.[0]?.starts_at;
-    expect(startsAt).toBeTruthy();
-
-    const payload = {
-      slug: TEST_SLUG,
-      serviceId,
-      startsAt,
-      clientName: "Cliente Teste",
-      clientPhone: "51988888888",
-      clientEmail: "cliente-e2e@example.com",
-    };
+    const { slots } = await getSlots();
+    bookedStartsAt = slots[0].starts_at;
 
     const [first, second] = await Promise.all([
-      fetch(`${STAGING_URL}/api/book`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }),
-      fetch(`${STAGING_URL}/api/book`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }),
+      postBooking(bookedStartsAt),
+      postBooking(bookedStartsAt),
     ]);
 
     expect([first.status, second.status].sort((a, b) => a - b)).toEqual([201, 409]);
+    const successful = first.status === 201 ? first : second;
+    const successBody = (await successful.json()) as { cancelUrl?: string };
+    expect(successBody.cancelUrl).toBeTruthy();
+    cancelToken = new URL(successBody.cancelUrl as string).pathname.split("/cancel/")[1];
+    expect(cancelToken).toBeTruthy();
 
     const databaseResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/appointments?user_id=eq.${userId}&select=id,starts_at`,
+      `${SUPABASE_URL}/rest/v1/appointments?user_id=eq.${userId}&select=id,status,starts_at`,
       { headers },
     );
     const appointments = await databaseResponse.json();
     expect(appointments).toHaveLength(1);
 
-    const availabilityAfter = await fetch(
-      `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${serviceId}&date=${date}`,
+    const after = await getSlots();
+    expect(after.slots.some((slot) => slot.starts_at === bookedStartsAt)).toBe(false);
+  }, 15_000);
+
+  it("cancela atomicamente e libera o slot (200 + 409)", async () => {
+    const request = () => fetch(`${STAGING_URL}/api/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: cancelToken }),
+    });
+
+    const [first, second] = await Promise.all([request(), request()]);
+    expect([first.status, second.status].sort((a, b) => a - b)).toEqual([200, 409]);
+
+    const databaseResponse = await fetch(
+      `${SUPABASE_URL}/rest/v1/appointments?user_id=eq.${userId}&select=id,status,cancelled_by`,
+      { headers },
     );
-    const afterData = await availabilityAfter.json();
-    expect(afterData.slots.some((slot: { starts_at: string }) => slot.starts_at === startsAt)).toBe(false);
+    const appointments = await databaseResponse.json();
+    expect(appointments).toHaveLength(1);
+    expect(appointments[0].status).toBe("cancelled");
+    expect(appointments[0].cancelled_by).toBe("client");
+
+    const afterCancel = await getSlots();
+    expect(afterCancel.slots.some((slot) => slot.starts_at === bookedStartsAt)).toBe(true);
+  }, 15_000);
+
+  it("trata serviço inativo como indisponível", async () => {
+    await fetch(`${SUPABASE_URL}/rest/v1/services?id=eq.${serviceId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ active: false }),
+    });
+
+    try {
+      const availability = await getSlots();
+      expect(availability.response.status).toBe(404);
+      expect(availability.data.code).toBe("service_not_found");
+
+      const page = await fetch(`${STAGING_URL}/${TEST_SLUG}`);
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain("Nenhum serviço disponível");
+    } finally {
+      await fetch(`${SUPABASE_URL}/rest/v1/services?id=eq.${serviceId}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ active: true }),
+      });
+    }
+  });
+
+  it("aplica limite mensal do plano Free", async () => {
+    const profileUpdate = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ trial_status: "ended", trial_ends_at: null }),
+    });
+    expect(profileUpdate.ok).toBe(true);
+
+    const existingResponse = await fetch(
+      `${SUPABASE_URL}/rest/v1/appointments?user_id=eq.${userId}&select=id`,
+      { headers },
+    );
+    const existing = (await existingResponse.json()) as { id: string }[];
+    const missing = Math.max(0, 10 - existing.length);
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(3, 0, 0, 0);
+    const startsAt = monthStart.toISOString();
+    const endsAt = new Date(monthStart.getTime() + 30 * 60_000).toISOString();
+
+    if (missing > 0) {
+      const fillers = Array.from({ length: missing }, (_, index) => ({
+        user_id: userId,
+        service_id: serviceId,
+        service_name_snapshot: "Corte",
+        service_duration_minutes: 30,
+        buffer_before: 0,
+        buffer_after: 0,
+        starts_at: startsAt,
+        ends_at: endsAt,
+        timezone: "America/Sao_Paulo",
+        client_name: `Quota ${index + 1}`,
+        client_phone: "51977777777",
+        status: "completed",
+      }));
+      const insert = await fetch(`${SUPABASE_URL}/rest/v1/appointments`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(fillers),
+      });
+      if (!insert.ok) throw new Error(`Falha ao preparar quota: ${await insert.text()}`);
+    }
+
+    const { slots } = await getSlots();
+    const response = await postBooking(slots[0].starts_at);
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as ApiError;
+    expect(body.code).toBe("free_plan_limit_reached");
+    expect(body.error).toContain("limite mensal do plano Free");
   }, 15_000);
 });
