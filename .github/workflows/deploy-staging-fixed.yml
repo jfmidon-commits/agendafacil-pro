@@ -18,16 +18,18 @@ jobs:
       - name: 📦 Install dependencies
         run: |
           cd web
-          npm ci
+          npm install --no-audit --no-fund
 
-      - name: 🏗️ Build
+      - name: 🧪 Validate app
         run: |
           cd web
+          npm run typecheck
+          npm test
           npm run build
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-          NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL_STAGING }}
           CANCEL_SIGNING_SECRET: ${{ secrets.CANCEL_SIGNING_SECRET }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
