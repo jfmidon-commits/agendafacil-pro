@@ -94,13 +94,7 @@ create table public.appointments (
   cancelled_by text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  occupied_range tstzrange generated always as (
-    tstzrange(
-      starts_at - make_interval(mins => buffer_before),
-      ends_at + make_interval(mins => buffer_after),
-      '[)'
-    )
-  ) stored,
+  occupied_range tstzrange not null,
   constraint appointments_valid_range check (ends_at > starts_at),
   constraint appointments_no_double_booking exclude using gist (
     user_id with =,
@@ -144,6 +138,22 @@ create table public.stripe_events (
   processed_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+create or replace function public.set_appointment_occupied_range()
+returns trigger language plpgsql as $$
+begin
+  new.occupied_range := tstzrange(
+    new.starts_at - make_interval(mins => new.buffer_before),
+    new.ends_at + make_interval(mins => new.buffer_after),
+    '[)'
+  );
+  return new;
+end;
+$$;
+
+create trigger appointments_set_occupied_range
+before insert or update of starts_at, ends_at, buffer_before, buffer_after on public.appointments
+for each row execute function public.set_appointment_occupied_range();
 
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$
