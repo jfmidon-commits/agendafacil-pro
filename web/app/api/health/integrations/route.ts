@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { cronAuthorized } from "@/lib/cron";
+import { getStripeCatalogStatus } from "@/lib/stripe";
 
 export async function GET(request: Request) {
   if (!cronAuthorized(request)) {
@@ -8,6 +9,7 @@ export async function GET(request: Request) {
 
   const makeAppointment = Boolean(process.env.MAKE_APPOINTMENT_WEBHOOK_URL);
   const makeReminder = Boolean(process.env.MAKE_REMINDER_WEBHOOK_URL);
+  const stripeCatalog = await getStripeCatalogStatus();
 
   return NextResponse.json({
     appUrl: Boolean(process.env.NEXT_PUBLIC_APP_URL),
@@ -20,9 +22,9 @@ export async function GET(request: Request) {
     stripe: {
       secret: Boolean(process.env.STRIPE_SECRET_KEY),
       webhook: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
-      proMonthly: Boolean(process.env.STRIPE_PRICE_PRO_MONTHLY),
-      proAnnual: Boolean(process.env.STRIPE_PRICE_PRO_ANNUAL),
-      studioMonthly: Boolean(process.env.STRIPE_PRICE_STUDIO_MONTHLY),
+      proMonthly: stripeCatalog.proMonthly,
+      proAnnual: stripeCatalog.proAnnual,
+      studioMonthly: stripeCatalog.studioMonthly,
     },
   });
 }
