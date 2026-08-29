@@ -1,9 +1,84 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createCancelToken } from "@/lib/cancel-token";
+import { mapPublicSchedulingError } from "@/lib/domain/public-booking-errors";
 import { deliverIntegrationEvent } from "@/lib/integrations/make";
 import { createServiceClient } from "@/lib/supabase/service";
 
-const schema=z.object({slug:z.string().min(3).max(50),serviceId:z.string().uuid(),startsAt:z.string().datetime({offset:true}),clientName:z.string().trim().min(2).max(120),clientPhone:z.string().trim().min(8).max(30),clientEmail:z.string().email().max(200).optional().or(z.literal("")),notes:z.string().max(500).optional().or(z.literal(""))});
-const errors:Record<string,string>={free_plan_limit_reached:"Este profissional atingiu o limite mensal do plano Free.",slot_unavailable:"Esse horário acabou de ser reservado. Escolha outro.",schedule_block_conflict:"Horário indisponível.",outside_availability:"Horário fora da agenda do profissional.",service_not_found:"Serviço indisponível.",profile_not_found:"Profissional não encontrado."};
-export async function POST(request:Request){let json:unknown;try{json=await request.json();}catch{return NextResponse.json({error:"JSON inválido"},{status:400});}const parsed=schema.safeParse(json);if(!parsed.success)return NextResponse.json({error:"Dados de agendamento inválidos"},{status:400});const d=parsed.data;const supabase=createServiceClient();const {data,error}=await supabase.rpc("book_appointment",{p_slug:d.slug,p_service_id:d.serviceId,p_starts_at:d.startsAt,p_client_name:d.clientName,p_client_phone:d.clientPhone,p_client_email:d.clientEmail||null,p_notes:d.notes||null});if(error){const known=Object.entries(errors).find(([key])=>error.message.includes(key));return NextResponse.json({error:known?.[1]||"Não foi possível concluir a reserva."},{status:error.message.includes("slot_unavailable")?409:400});}const row=data?.[0];if(!row)return NextResponse.json({error:"Reserva não criada"},{status:500});const exp=Math.floor(new Date(row.starts_at).getTime()/1000);const token=createCancelToken(row.appointment_id,exp);const base=process.env.NEXT_PUBLIC_APP_URL||new URL(request.url).origin;await deliverIntegrationEvent(row.integration_event_id).catch(()=>false);return NextResponse.json({appointmentId:row.appointment_id,startsAt:row.starts_at,endsAt:row.ends_at,timezone:row.timezone,cancelUrl:`${base}/cancel/${token}`},{status:201});}
+const schema = z.object({
+  slug: z.string().regex(/^[a-z0-9][a-z0-9-]{2,49}$/i),
+  serviceId: z.string().uuid(),
+  startsAt: z.string().datetime({ offset: true }),
+  clientName: z.string().trim().min(2).max(120),
+  clientPhone: z.string().trim().min(8).max(30),
+  clientEmail: z.string().email().max(200).optional().or(z.literal("")),
+  notes: z.string().max(500).optional().or(z.literal("")),
+});
+
+export async function POST(request: Request) {
+  let json: unknown;
+  try {
+    json = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: "JSON inválido.", code: "invalid_json" },
+      { status: 400 },
+    );
+  }
+
+  const parsed = schema.safeParse(json);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Dados de agendamento inválidos.", code: "invalid_request" },
+      { status: 400 },
+    );
+  }
+
+  const data = parsed.data;
+  const supabase = createServiceClient();
+  const { data: rows, error } = await supabase.rpc("book_appointment", {
+    p_slug: data.slug,
+    p_service_id: data.serviceId,
+    p_starts_at: data.startsAt,
+    p_client_name: data.clientName,
+    p_client_phone: data.clientPhone,
+    p_client_email: data.clientEmail || null,
+    p_notes: data.notes || null,
+  });
+
+  if (error) {
+    const mapped = mapPublicSchedulingError(
+      error.message,
+      "Não foi possível concluir a reserva.",
+    );
+    return NextResponse.json(
+      { error: mapped.message, code: mapped.code },
+      { status: mapped.status },
+    );
+  }
+
+  const row = rows?.[0];
+  if (!row) {
+    return NextResponse.json(
+      { error: "Reserva não criada.", code: "booking_not_created" },
+      { status: 500 },
+    );
+  }
+
+  const expiresAt = Math.floor(new Date(row.starts_at).getTime() / 1000);
+  const token = createCancelToken(row.appointment_id, expiresAt);
+  const base = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin;
+
+  await deliverIntegrationEvent(row.integration_event_id).catch(() => false);
+
+  return NextResponse.json(
+    {
+      appointmentId: row.appointment_id,
+      startsAt: row.starts_at,
+      endsAt: row.ends_at,
+      timezone: row.timezone,
+      cancelUrl: `${base}/cancel/${token}`,
+    },
+    { status: 201 },
+  );
+}
