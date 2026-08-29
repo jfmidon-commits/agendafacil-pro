@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNextLocalDay, localDateKey, nextLocalDateKey } from "@/lib/domain/reminders";
+import { isNextLocalDay, localDateKey, nextLocalDateKey } from "./reminders";
 
 describe("next-day reminder window", () => {
   const zone = "America/Sao_Paulo";
