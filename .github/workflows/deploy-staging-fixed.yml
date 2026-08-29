@@ -51,10 +51,10 @@ jobs:
 
           sync_env() {
             name="$1"
-            value="$2"
+            value="$(printf '%s' "$2" | tr -d '\r\n')"
 
             if [ -z "$value" ]; then
-              echo "::error::Source value for ${name} is unavailable."
+              echo "::error::Source value for ${name} is unavailable after normalization."
               exit 1
             fi
 
@@ -75,6 +75,33 @@ jobs:
 
           sync_env CRON_SECRET "$CRON_SECRET_VALUE"
           sync_env NEXT_PUBLIC_APP_URL "$APP_URL_VALUE"
+
+          npx --yes vercel@latest env pull /tmp/vercel-production.env --environment=production --yes --token="$VERCEL_TOKEN" >/tmp/vercel-env-pull.log 2>&1
+
+          CRON_SECRET_VALUE="$CRON_SECRET_VALUE" node <<'NODE'
+          const fs = require('fs');
+          const text = fs.readFileSync('/tmp/vercel-production.env', 'utf8');
+
+          function readEnv(name) {
+            const line = text.split(/\r?\n/).find((item) => item.startsWith(`${name}=`));
+            if (!line) return null;
+            const raw = line.slice(name.length + 1);
+            if (raw.startsWith('"')) {
+              try { return JSON.parse(raw); } catch { return raw.slice(1, -1); }
+            }
+            return raw;
+          }
+
+          const expected = (process.env.CRON_SECRET_VALUE || '').replace(/[\r\n]/g, '');
+          const actual = (readEnv('CRON_SECRET') || '').replace(/[\r\n]/g, '');
+
+          if (!expected || !actual || expected !== actual) {
+            console.error('CRON_SECRET production value does not match the normalized GitHub source.');
+            process.exit(1);
+          }
+
+          console.log('CRON_SECRET production value verified without exposing the secret.');
+          NODE
 
       - name: 🚀 Deploy to Vercel
         working-directory: ./web
