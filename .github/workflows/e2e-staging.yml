@@ -1,40 +1,35 @@
-name: 🧪 Staging E2E Double Booking
+name: 🧪 Staging E2E Public Booking
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'web/lib/domain/**'
-      - 'web/app/api/**'
-      - 'web/supabase/migrations/**'
-      - '.github/workflows/e2e-staging.yml'
-
-env:
-  NODE_VERSION: '20'
+  workflow_run:
+    workflows: ["🚀 Deploy Staging Fixed"]
+    types: [completed]
 
 jobs:
   e2e:
-    name: E2E Double Booking Test
+    name: E2E Public Booking Test
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment: staging
     steps:
-      - name: 📥 Checkout
+      - name: 📥 Checkout deployed revision
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: ⚡ Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: ./web/package-lock.json
+          node-version: '20'
 
       - name: 📦 Install dependencies
-        run: cd web && npm ci
+        run: cd web && npm install --no-audit --no-fund
 
       - name: 🧪 Run E2E Test
         run: cd web && npx vitest run lib/domain/booking.e2e.test.ts
         env:
+          RUN_STAGING_E2E: '1'
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL_STAGING }}
