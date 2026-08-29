@@ -5,6 +5,7 @@ const baseURL = process.env.NEXT_PUBLIC_APP_URL_STAGING || process.env.NEXT_PUBL
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
+  forbidOnly: Boolean(process.env.CI),
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   timeout: 90_000,
