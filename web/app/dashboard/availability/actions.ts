@@ -33,7 +33,7 @@ export async function addAvailabilityRule(formData: FormData) {
   }
 
   const { supabase, user } = await authenticatedClient();
-  const { data: duplicate } = await supabase
+  const { data: duplicates, error: duplicateError } = await supabase
     .from("availability_rules")
     .select("id")
     .eq("user_id", user.id)
@@ -42,9 +42,10 @@ export async function addAvailabilityRule(formData: FormData) {
     .eq("end_time", parsed.data.end)
     .eq("slot_interval_minutes", parsed.data.interval)
     .eq("active", true)
-    .maybeSingle();
+    .limit(1);
+  if (duplicateError) throw new Error(duplicateError.message);
 
-  if (!duplicate) {
+  if (!duplicates?.length) {
     const { error } = await supabase.from("availability_rules").insert({
       user_id: user.id,
       day_of_week: parsed.data.day,
