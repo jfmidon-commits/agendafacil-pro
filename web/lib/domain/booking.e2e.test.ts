@@ -1,278 +1,163 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
- * E2E Staging Test — Double Booking Prevention
- * 
- * Este teste:
- * 1. Cria um profissional temporário no Supabase
- * 2. Configura serviço e disponibilidade
- * 3. Consulta slots disponíveis
- * 4. Dispara duas reservas concorrentes
- * 5. Valida que apenas uma succeede (201 vs 409)
- * 6. Limpa todos os dados criados
- * 
- * ⚠️  Só roda em staging. Nunca em produção.
+ * E2E de staging — prevenção de double booking.
+ *
+ * O CI comum NÃO executa este teste. Para rodar intencionalmente:
+ * RUN_STAGING_E2E=1 + credenciais de staging.
+ * A URL é bloqueada se não parecer staging/localhost.
  */
 
-// Configuração
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const STAGING_URL = process.env.NEXT_PUBLIC_APP_URL_STAGING || process.env.NEXT_PUBLIC_APP_URL!;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const STAGING_URL = process.env.NEXT_PUBLIC_APP_URL_STAGING || process.env.NEXT_PUBLIC_APP_URL || "";
+const RUN_STAGING_E2E = process.env.RUN_STAGING_E2E === "1";
+const SAFE_TARGET = STAGING_URL.includes("staging") || STAGING_URL.includes("localhost");
 
-// Helpers
-async function supabaseQuery(query: string) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/exec`, {
-    method: "POST",
-    headers: {
-      "apikey": SERVICE_KEY,
-      "Authorization": `Bearer ${SERVICE_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ query }),
-  });
-  return res;
+if (RUN_STAGING_E2E && (!SUPABASE_URL || !SERVICE_KEY || !STAGING_URL)) {
+  throw new Error("RUN_STAGING_E2E=1 exige URL e credenciais de staging.");
+}
+if (RUN_STAGING_E2E && !SAFE_TARGET) {
+  throw new Error(`E2E destrutivo bloqueado fora de staging/localhost: ${STAGING_URL}`);
 }
 
-async function supabaseRpc(functionName: string, params: Record<string, unknown>) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${functionName}`, {
-    method: "POST",
-    headers: {
-      "apikey": SERVICE_KEY,
-      "Authorization": `Bearer ${SERVICE_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(params),
-  });
-  return res;
-}
+const describeE2E = RUN_STAGING_E2E ? describe : describe.skip;
+const headers = {
+  apikey: SERVICE_KEY,
+  Authorization: `Bearer ${SERVICE_KEY}`,
+  "Content-Type": "application/json",
+};
 
-// Gerar dados únicos para cada execução
 const TEST_ID = crypto.randomUUID();
 const TEST_EMAIL = `e2e-${TEST_ID.slice(0, 8)}@agendafacil.test`;
 const TEST_SLUG = `barbearia-e2e-${TEST_ID.slice(0, 8)}`;
-const TEST_PHONE = "(51) 99999-9999";
 
-let userId: string;
-let serviceId: string;
-let profileId: string;
+let userId = "";
+let serviceId = "";
 
-describe("E2E Staging — Double Booking", () => {
+async function waitForProfile(id: string) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${id}&select=id`, { headers });
+    const rows = await response.json();
+    if (Array.isArray(rows) && rows.length === 1) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("Trigger handle_new_user não criou o profile a tempo.");
+}
+
+function tomorrowDate() {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+describeE2E("E2E Staging — Double Booking", () => {
   beforeAll(async () => {
-    // Verificar ambiente
-    if (!SUPABASE_URL || !SERVICE_KEY) {
-      throw new Error("Credenciais de staging não configuradas. Pule este teste.");
-    }
-    if (!STAGING_URL.includes("staging") && !STAGING_URL.includes("localhost")) {
-      throw new Error("E2E só roda em staging. URL detectada: " + STAGING_URL);
-    }
-
-    // 1. Criar usuário no auth
-    const createUserRes = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+    const createUser = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
       method: "POST",
-      headers: {
-        "apikey": SERVICE_KEY,
-        "Authorization": `Bearer ${SERVICE_KEY}`,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         email: TEST_EMAIL,
-        password: "TestPassword123!",
+        password: `E2E-${TEST_ID}-Aa1!`,
         email_confirm: true,
         user_metadata: { name: "Barbeiro E2E" },
       }),
     });
+    if (!createUser.ok) throw new Error(`Falha ao criar usuário: ${await createUser.text()}`);
+    const user = await createUser.json();
+    userId = user.id;
+    await waitForProfile(userId);
 
-    if (!createUserRes.ok) {
-      throw new Error(`Falha ao criar usuário: ${await createUserRes.text()}`);
-    }
-
-    const userData = await createUserRes.json();
-    userId = userData.id;
-
-    // Aguardar trigger handle_new_user
-    await new Promise((r) => setTimeout(r, 500));
-
-    // 2. Criar public_profile
-    const profileRes = await fetch(`${SUPABASE_URL}/rest/v1/public_profiles`, {
+    const publicProfile = await fetch(`${SUPABASE_URL}/rest/v1/public_profiles`, {
       method: "POST",
-      headers: {
-        "apikey": SERVICE_KEY,
-        "Authorization": `Bearer ${SERVICE_KEY}`,
-        "Content-Type": "application/json",
-        "Prefer": "return=representation",
-      },
+      headers: { ...headers, Prefer: "return=representation" },
       body: JSON.stringify({
         user_id: userId,
         business_name: "Barbearia E2E Test",
         slug: TEST_SLUG,
-        description: "Barbearia criada automaticamente para teste E2E",
-        phone: TEST_PHONE,
-        whatsapp: "51999999999",
+        description: "Criada automaticamente para o E2E de staging",
+        active: true,
       }),
     });
+    if (!publicProfile.ok) throw new Error(`Falha ao criar perfil público: ${await publicProfile.text()}`);
 
-    if (!profileRes.ok) {
-      throw new Error(`Falha ao criar public_profile: ${await profileRes.text()}`);
-    }
-    const profileData = await profileRes.json();
-    profileId = profileData[0].id;
-
-    // 3. Criar serviço: Corte — 30min — R$35
-    const serviceRes = await fetch(`${SUPABASE_URL}/rest/v1/services`, {
+    const service = await fetch(`${SUPABASE_URL}/rest/v1/services`, {
       method: "POST",
-      headers: {
-        "apikey": SERVICE_KEY,
-        "Authorization": `Bearer ${SERVICE_KEY}`,
-        "Content-Type": "application/json",
-        "Prefer": "return=representation",
-      },
+      headers: { ...headers, Prefer: "return=representation" },
       body: JSON.stringify({
         user_id: userId,
         name: "Corte",
-        description: "Corte de cabelo masculino com acabamento perfeito",
         duration_minutes: 30,
         price_cents: 3500,
-        color: "#8B5CF6",
+        buffer_before: 0,
+        buffer_after: 0,
+        active: true,
       }),
     });
+    if (!service.ok) throw new Error(`Falha ao criar serviço: ${await service.text()}`);
+    const serviceRows = await service.json();
+    serviceId = serviceRows[0].id;
 
-    if (!serviceRes.ok) {
-      throw new Error(`Falha ao criar serviço: ${await serviceRes.text()}`);
-    }
-    const serviceData = await serviceRes.json();
-    serviceId = serviceData[0].id;
-
-    // 4. Criar disponibilidade: Seg-Sex 9h-18h
-    const availabilityData = [
-      { day_of_week: 1, start_time: "09:00", end_time: "18:00" },
-      { day_of_week: 2, start_time: "09:00", end_time: "18:00" },
-      { day_of_week: 3, start_time: "09:00", end_time: "18:00" },
-      { day_of_week: 4, start_time: "09:00", end_time: "18:00" },
-      { day_of_week: 5, start_time: "09:00", end_time: "18:00" },
-    ];
-
-    for (const avail of availabilityData) {
-      const availRes = await fetch(`${SUPABASE_URL}/rest/v1/availability_rules`, {
-        method: "POST",
-        headers: {
-          "apikey": SERVICE_KEY,
-          "Authorization": `Bearer ${SERVICE_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          user_id: userId,
-          ...avail,
-        }),
-      });
-      if (!availRes.ok) {
-        console.warn(`Falha ao criar disponibilidade dia ${avail.day_of_week}`);
-      }
-    }
-
-    // 5. Criar subscription pro (para não bloquear no plano free)
-    await fetch(`${SUPABASE_URL}/rest/v1/subscriptions`, {
+    const availability = Array.from({ length: 7 }, (_, day) => ({
+      user_id: userId,
+      day_of_week: day,
+      start_time: "09:00",
+      end_time: "12:00",
+      slot_interval_minutes: 30,
+      active: true,
+    }));
+    const availabilityResponse = await fetch(`${SUPABASE_URL}/rest/v1/availability_rules`, {
       method: "POST",
-      headers: {
-        "apikey": SERVICE_KEY,
-        "Authorization": `Bearer ${SERVICE_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        user_id: userId,
-        plan: "pro",
-        status: "active",
-        current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      }),
+      headers,
+      body: JSON.stringify(availability),
     });
-  }, 30000);
+    if (!availabilityResponse.ok) {
+      throw new Error(`Falha ao criar disponibilidade: ${await availabilityResponse.text()}`);
+    }
+  }, 30_000);
 
   afterAll(async () => {
-    // Limpar TODOS os dados criados
     if (!userId) return;
 
-    // Deletar em ordem reversa (foreign keys)
-    await fetch(`${SUPABASE_URL}/rest/v1/appointments?user_id=eq.${userId}`, {
-      method: "DELETE",
-      headers: { "apikey": SERVICE_KEY, "Authorization": `Bearer ${SERVICE_KEY}` },
-    });
-    await fetch(`${SUPABASE_URL}/rest/v1/availability_rules?user_id=eq.${userId}`, {
-      method: "DELETE",
-      headers: { "apikey": SERVICE_KEY, "Authorization": `Bearer ${SERVICE_KEY}` },
-    });
-    await fetch(`${SUPABASE_URL}/rest/v1/services?user_id=eq.${userId}`, {
-      method: "DELETE",
-      headers: { "apikey": SERVICE_KEY, "Authorization": `Bearer ${SERVICE_KEY}` },
-    });
-    await fetch(`${SUPABASE_URL}/rest/v1/public_profiles?user_id=eq.${userId}`, {
-      method: "DELETE",
-      headers: { "apikey": SERVICE_KEY, "Authorization": `Bearer ${SERVICE_KEY}` },
-    });
-    await fetch(`${SUPABASE_URL}/rest/v1/subscriptions?user_id=eq.${userId}`, {
-      method: "DELETE",
-      headers: { "apikey": SERVICE_KEY, "Authorization": `Bearer ${SERVICE_KEY}` },
-    });
-    await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
-      method: "DELETE",
-      headers: { "apikey": SERVICE_KEY, "Authorization": `Bearer ${SERVICE_KEY}` },
-    });
-    // Deletar usuário do auth
-    await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
-      method: "DELETE",
-      headers: { "apikey": SERVICE_KEY, "Authorization": `Bearer ${SERVICE_KEY}` },
-    });
-  }, 30000);
+    await fetch(`${SUPABASE_URL}/rest/v1/appointments?user_id=eq.${userId}`, { method: "DELETE", headers });
+    await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, { method: "DELETE", headers });
+  }, 30_000);
 
-  it("deve criar profissional, serviço e disponibilidade", () => {
-    expect(userId).toBeDefined();
-    expect(serviceId).toBeDefined();
-    expect(profileId).toBeDefined();
+  it("cria o cenário temporário", () => {
+    expect(userId).toBeTruthy();
+    expect(serviceId).toBeTruthy();
   });
 
-  it("deve retornar slots disponíveis via API", async () => {
-    // Pegar uma data futura (amanhã)
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dateStr = tomorrow.toISOString().split("T")[0];
-
-    const res = await fetch(
-      `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${serviceId}&date=${dateStr}`
+  it("retorna slots disponíveis via API", async () => {
+    const response = await fetch(
+      `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${serviceId}&date=${tomorrowDate()}`,
     );
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
+    expect(response.status).toBe(200);
+    const data = await response.json();
     expect(Array.isArray(data.slots)).toBe(true);
     expect(data.slots.length).toBeGreaterThan(0);
+    expect(data.slots[0].starts_at).toBeTruthy();
   });
 
-  it("deve permitir apenas 1 reserva em slot concorrente (201 + 409)", async () => {
-    // Pegar uma data futura (amanhã)
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dateStr = tomorrow.toISOString().split("T")[0];
-
-    // Consultar slots
-    const availRes = await fetch(
-      `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${serviceId}&date=${dateStr}`
+  it("permite exatamente uma reserva concorrente (201 + 409)", async () => {
+    const date = tomorrowDate();
+    const availability = await fetch(
+      `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${serviceId}&date=${date}`,
     );
-    const availData = await availRes.json();
-    expect(availData.slots.length).toBeGreaterThan(0);
+    const availabilityData = await availability.json();
+    const startsAt = availabilityData.slots?.[0]?.starts_at;
+    expect(startsAt).toBeTruthy();
 
-    // Pegar o primeiro slot
-    const slot = availData.slots[0];
-    const startsAt = slot; // já vem no formato ISO
-
-    // Preparar payload
     const payload = {
       slug: TEST_SLUG,
-      serviceId: serviceId,
-      startsAt: startsAt,
+      serviceId,
+      startsAt,
       clientName: "Cliente Teste",
-      clientPhone: "(51) 98888-8888",
-      clientEmail: "teste@email.com",
+      clientPhone: "51988888888",
+      clientEmail: "cliente-e2e@example.com",
     };
 
-    // Disparar DUAS requisições SIMULTÂNEAS
-    const [res1, res2] = await Promise.all([
+    const [first, second] = await Promise.all([
       fetch(`${STAGING_URL}/api/book`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -285,29 +170,19 @@ describe("E2E Staging — Double Booking", () => {
       }),
     ]);
 
-    // 8. Validar: uma 201, outra 409
-    const statuses = [res1.status, res2.status].sort();
-    expect(statuses).toEqual([201, 409]);
+    expect([first.status, second.status].sort((a, b) => a - b)).toEqual([201, 409]);
 
-    // 9. Verificar no banco: exatamente 1 appointment
-    const dbRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/appointments?user_id=eq.${userId}&select=*`,
-      {
-        headers: {
-          "apikey": SERVICE_KEY,
-          "Authorization": `Bearer ${SERVICE_KEY}`,
-        },
-      }
+    const databaseResponse = await fetch(
+      `${SUPABASE_URL}/rest/v1/appointments?user_id=eq.${userId}&select=id,starts_at`,
+      { headers },
     );
-    const appointments = await dbRes.json();
-    expect(appointments.length).toBe(1);
+    const appointments = await databaseResponse.json();
+    expect(appointments).toHaveLength(1);
 
-    // 10. Verificar que o slot desapareceu da disponibilidade
-    const availRes2 = await fetch(
-      `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${serviceId}&date=${dateStr}`
+    const availabilityAfter = await fetch(
+      `${STAGING_URL}/api/availability?slug=${TEST_SLUG}&serviceId=${serviceId}&date=${date}`,
     );
-    const availData2 = await availRes2.json();
-    const slotStillAvailable = availData2.slots.includes(startsAt);
-    expect(slotStillAvailable).toBe(false);
-  }, 15000);
+    const afterData = await availabilityAfter.json();
+    expect(afterData.slots.some((slot: { starts_at: string }) => slot.starts_at === startsAt)).toBe(false);
+  }, 15_000);
 });
