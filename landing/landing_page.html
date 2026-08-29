@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgendaFácil Pro - Seu link de agendamento em 2 minutos</title>
+    <meta name="description" content="AgendaFácil Pro: link de agendamento profissional para barbeiros, manicures, personal trainers e mais. Clientes marcam sozinhos, você só confirma.">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.6; color: #1F2937; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+
+        /* Hero */
+        .hero { background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white; padding: 80px 0; text-align: center; }
+        .hero h1 { font-size: 48px; font-weight: 800; margin-bottom: 16px; line-height: 1.2; }
+        .hero p { font-size: 20px; opacity: 0.9; margin-bottom: 32px; max-width: 600px; margin-left: auto; margin-right: auto; }
+        .btn-primary { background: white; color: #10B981; padding: 16px 32px; border-radius: 12px; font-size: 18px; font-weight: 600; text-decoration: none; display: inline-block; transition: transform 0.2s; border: none; cursor: pointer; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+        .btn-secondary { background: transparent; color: white; padding: 16px 32px; border-radius: 12px; font-size: 18px; font-weight: 600; text-decoration: none; display: inline-block; border: 2px solid white; margin-left: 12px; }
+
+        /* Pain Section */
+        .pain { padding: 80px 0; background: #F9FAFB; }
+        .pain h2 { text-align: center; font-size: 36px; font-weight: 700; margin-bottom: 48px; }
+        .pain-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 32px; }
+        .pain-card { background: white; padding: 32px; border-radius: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .pain-card .icon { font-size: 40px; margin-bottom: 16px; }
+        .pain-card h3 { font-size: 20px; font-weight: 600; margin-bottom: 8px; color: #DC2626; }
+        .pain-card p { color: #6B7280; }
+
+        /* Solution Section */
+        .solution { padding: 80px 0; }
+        .solution h2 { text-align: center; font-size: 36px; font-weight: 700; margin-bottom: 48px; }
+        .solution-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 32px; }
+        .solution-card { text-align: center; padding: 32px; }
+        .solution-card .icon { width: 64px; height: 64px; background: #D1FAE5; border-radius: 16px; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-size: 28px; }
+        .solution-card h3 { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+        .solution-card p { color: #6B7280; }
+
+        /* How It Works */
+        .how-it-works { padding: 80px 0; background: #F9FAFB; }
+        .how-it-works h2 { text-align: center; font-size: 36px; font-weight: 700; margin-bottom: 48px; }
+        .steps { display: flex; justify-content: center; gap: 48px; flex-wrap: wrap; }
+        .step { text-align: center; max-width: 200px; }
+        .step-number { width: 48px; height: 48px; background: #10B981; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; margin: 0 auto 16px; }
+        .step h4 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+        .step p { color: #6B7280; font-size: 14px; }
+
+        /* Pricing */
+        .pricing { padding: 80px 0; }
+        .pricing h2 { text-align: center; font-size: 36px; font-weight: 700; margin-bottom: 48px; }
+        .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 32px; max-width: 900px; margin: 0 auto; }
+        .pricing-card { background: white; padding: 40px 32px; border-radius: 16px; border: 2px solid #E5E7EB; text-align: center; }
+        .pricing-card.featured { border-color: #10B981; transform: scale(1.05); box-shadow: 0 20px 40px rgba(0,0,0,0.1); }
+        .pricing-card h3 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+        .pricing-card .price { font-size: 48px; font-weight: 800; color: #10B981; margin: 16px 0; }
+        .pricing-card .price span { font-size: 16px; color: #6B7280; font-weight: 400; }
+        .pricing-card ul { list-style: none; margin: 24px 0; text-align: left; }
+        .pricing-card ul li { padding: 8px 0; color: #4B5563; }
+        .pricing-card ul li::before { content: "✓"; color: #10B981; font-weight: 700; margin-right: 8px; }
+        .pricing-card .btn { width: 100%; padding: 14px; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; border: none; }
+        .pricing-card .btn-outline { background: white; color: #10B981; border: 2px solid #10B981; }
+        .pricing-card .btn-solid { background: #10B981; color: white; }
+
+        /* Testimonials */
+        .testimonials { padding: 80px 0; background: #F9FAFB; }
+        .testimonials h2 { text-align: center; font-size: 36px; font-weight: 700; margin-bottom: 48px; }
+        .testimonial-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 32px; }
+        .testimonial-card { background: white; padding: 32px; border-radius: 16px; }
+        .testimonial-card .stars { color: #F59E0B; margin-bottom: 16px; }
+        .testimonial-card p { font-style: italic; margin-bottom: 16px; }
+        .testimonial-card .author { font-weight: 600; }
+        .testimonial-card .role { color: #6B7280; font-size: 14px; }
+
+        /* CTA */
+        .cta { padding: 80px 0; background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white; text-align: center; }
+        .cta h2 { font-size: 36px; font-weight: 700; margin-bottom: 16px; }
+        .cta p { font-size: 18px; opacity: 0.9; margin-bottom: 32px; }
+
+        /* Footer */
+        footer { padding: 40px 0; text-align: center; color: #6B7280; }
+        footer a { color: #10B981; text-decoration: none; }
+
+        /* Mobile */
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 32px; }
+            .hero p { font-size: 18px; }
+            .btn-secondary { margin-left: 0; margin-top: 12px; display: block; }
+            .pricing-card.featured { transform: none; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Hero -->
+    <section class="hero">
+        <div class="container">
+            <h1>Seus clientes marcam sozinhos.<br>Você só confirma.</h1>
+            <p>O link de agendamento profissional que funciona 24h por dia — mesmo enquanto você dorme.</p>
+            <a href="#pricing" class="btn-primary">🚀 Criar meu link grátis</a>
+            <a href="#how-it-works" class="btn-secondary">Como funciona</a>
+        </div>
+    </section>
+
+    <!-- Pain -->
+    <section class="pain">
+        <div class="container">
+            <h2>❌ Você ainda perde tempo com isso?</h2>
+            <div class="pain-grid">
+                <div class="pain-card">
+                    <div class="icon">📱</div>
+                    <h3>"Tem horário?" no WhatsApp</h3>
+                    <p>Cada mensagem que você responde manualmente é tempo que não está ganhando dinheiro. Em média, 3 horas por semana perdidas.</p>
+                </div>
+                <div class="pain-card">
+                    <div class="icon">😴</div>
+                    <h3>Clientes que não aparecem</h3>
+                    <p>Sem confirmação automática, 20-30% dos clientes esquecem o agendamento. Horário vazio = dinheiro jogado fora.</p>
+                </div>
+                <div class="pain-card">
+                    <div class="icon">🗓️</div>
+                    <h3>Agenda bagunçada</h3>
+                    <p>Caderno de papel, planilhas, notas no celular... Conflitos de horário, sobreposições e impressão de amadorismo.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Solution -->
+    <section class="solution">
+        <div class="container">
+            <h2>✅ Com o AgendaFácil Pro, em 2 minutos você tem:</h2>
+            <div class="solution-grid">
+                <div class="solution-card">
+                    <div class="icon">🔗</div>
+                    <h3>Seu link personalizado</h3>
+                    <p>agendafacil.pro/seunome — profissional e fácil de compartilhar no Instagram, WhatsApp ou cartão de visitas.</p>
+                </div>
+                <div class="solution-card">
+                    <div class="icon">🤖</div>
+                    <h3>Clientes marcam sozinhos</h3>
+                    <p>Escolhem serviço, dia e horário disponível. Sem precisar te incomodar.</p>
+                </div>
+                <div class="solution-card">
+                    <div class="icon">💬</div>
+                    <h3>Confirmação automática</h3>
+                    <p>WhatsApp automático para o cliente e alerta para você. Zero no-shows.</p>
+                </div>
+                <div class="solution-card">
+                    <div class="icon">⏰</div>
+                    <h3>Lembretes automáticos</h3>
+                    <p>24h antes, o cliente recebe um lembrete. Taxa de comparecimento sobe para 95%.</p>
+                </div>
+                <div class="solution-card">
+                    <div class="icon">📊</div>
+                    <h3>Painel no celular</h3>
+                    <p>Gerencie todos os agendamentos de qualquer lugar. Confirme, cancele ou reagende em 1 toque.</p>
+                </div>
+                <div class="solution-card">
+                    <div class="icon">💳</div>
+                    <h3>Receba online</h3>
+                    <p>Integração com Stripe para pagamentos automáticos. Receba antes do atendimento.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="how-it-works" id="how-it-works">
+        <div class="container">
+            <h2>Como funciona</h2>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <h4>Cadastre-se</h4>
+                    <p>Nome, WhatsApp e nome do negócio. Leva 30 segundos.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <h4>Configure serviços</h4>
+                    <p>Quais serviços você oferece e por quanto.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <h4>Defina horários</h4>
+                    <p>Quando você atende e pausas (almoço, folga).</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <h4>Compartilhe o link</h4>
+                    <p>Envie para clientes ou poste nas redes sociais.</p>
+                </div>
+                <div class="step">
+                    <div class="step-number">5</div>
+                    <h4>Receba agendamentos</h4>
+                    <p>Clientes marcam sozinhos. Você só confirma no painel.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing -->
+    <section class="pricing" id="pricing">
+        <div class="container">
+            <h2>Escolha seu plano</h2>
+            <p style="text-align: center; color: #6B7280; margin-bottom: 48px;">14 dias grátis no plano Pro. Sem cartão de crédito.</p>
+            <div class="pricing-grid">
+                <div class="pricing-card">
+                    <h3>Free</h3>
+                    <div class="price">R$ 0<span>/mês</span></div>
+                    <ul>
+                        <li>10 agendamentos/mês</li>
+                        <li>Link personalizado</li>
+                        <li>Painel básico</li>
+                        <li>—</li>
+                        <li>—</li>
+                    </ul>
+                    <button class="btn btn-outline" onclick="window.location.href='https://app.flutterflow.io'">Começar grátis</button>
+                </div>
+                <div class="pricing-card featured">
+                    <h3>Pro ⭐</h3>
+                    <div class="price">R$ 39<span>/mês</span></div>
+                    <ul>
+                        <li>Agendamentos ilimitados</li>
+                        <li>Link personalizado</li>
+                        <li>Painel completo</li>
+                        <li>WhatsApp automático</li>
+                        <li>Lembretes automáticos</li>
+                        <li>Relatórios mensais</li>
+                    </ul>
+                    <button class="btn btn-solid" onclick="window.location.href='https://app.flutterflow.io'">Testar 14 dias grátis</button>
+                </div>
+                <div class="pricing-card">
+                    <h3>Studio</h3>
+                    <div class="price">R$ 79<span>/mês</span></div>
+                    <ul>
+                        <li>Tudo do Pro</li>
+                        <li>Múltiplos profissionais</li>
+                        <li>Múltiplas unidades</li>
+                        <li>Relatórios avançados</li>
+                        <li>Suporte prioritário</li>
+                    </ul>
+                    <button class="btn btn-outline" onclick="window.location.href='https://app.flutterflow.io'">Falar com vendas</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="testimonials">
+        <div class="container">
+            <h2>O que dizem os profissionais</h2>
+            <div class="testimonial-grid">
+                <div class="testimonial-card">
+                    <div class="stars">⭐⭐⭐⭐⭐</div>
+                    <p>"Antes eu perdia 3 horas por semana só respondendo mensagem. Agora meus clientes marcam sozinhos e eu só confirmo. Meu faturamento subiu 30% porque parei de ter horários vazios."</p>
+                    <div class="author">Carlos Silva</div>
+                    <div class="role">Barbeiro em São Paulo</div>
+                </div>
+                <div class="testimonial-card">
+                    <div class="stars">⭐⭐⭐⭐⭐</div>
+                    <p>"A confirmação automática por WhatsApp mudou tudo. Meus clientes nunca mais esqueceram do agendamento. Recomendo para todo mundo!"</p>
+                    <div class="author">Ana Paula</div>
+                    <div class="role">Manicure em Curitiba</div>
+                </div>
+                <div class="testimonial-card">
+                    <div class="stars">⭐⭐⭐⭐⭐</div>
+                    <p>"Simples, rápido e funciona perfeitamente no celular. Configurei tudo em 5 minutos e já comecei a receber agendamentos no mesmo dia."</p>
+                    <div class="author">Marcos Oliveira</div>
+                    <div class="role">Personal Trainer no Rio</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta">
+        <div class="container">
+            <h2>Pronto para parar de perder tempo?</h2>
+            <p>Crie seu link de agendamento profissional em 2 minutos. 14 dias grátis, sem cartão de crédito.</p>
+            <a href="https://app.flutterflow.io" class="btn-primary">🚀 Criar meu link grátis</a>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <p>© 2026 AgendaFácil Pro. Todos os direitos reservados.</p>
+            <p><a href="#">Termos de uso</a> • <a href="#">Política de privacidade</a> • <a href="#">Contato</a></p>
+        </div>
+    </footer>
+</body>
+</html>
