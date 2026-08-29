@@ -1,0 +1,56 @@
+name: 🔌 Integration Readiness
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["🚀 Deploy Staging Fixed"]
+    types: [completed]
+
+jobs:
+  readiness:
+    name: Check Make and Stripe configuration
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: 🔎 Probe protected readiness endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          STAGING_URL: https://agendafacil-staging-pearl.vercel.app
+        run: |
+          http_status=$(curl --silent --show-error --output /tmp/readiness.json --write-out "%{http_code}" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${STAGING_URL}/api/health/integrations")
+
+          cat /tmp/readiness.json
+
+          if [ "${http_status}" != "200" ]; then
+            echo "Readiness endpoint returned HTTP ${http_status}."
+            exit 1
+          fi
+
+          node <<'NODE'
+          const fs = require('fs');
+          const data = JSON.parse(fs.readFileSync('/tmp/readiness.json', 'utf8'));
+          const required = {
+            NEXT_PUBLIC_APP_URL: data.appUrl,
+            MAKE_APPOINTMENT_WEBHOOK_URL: data.make?.appointment,
+            MAKE_REMINDER_EFFECTIVE: data.make?.reminderEffective,
+            STRIPE_SECRET_KEY: data.stripe?.secret,
+            STRIPE_WEBHOOK_SECRET: data.stripe?.webhook,
+            STRIPE_PRICE_PRO_MONTHLY: data.stripe?.proMonthly,
+            STRIPE_PRICE_PRO_ANNUAL: data.stripe?.proAnnual,
+          };
+          const optional = {
+            MAKE_BILLING_WEBHOOK_URL: data.make?.billing,
+            STRIPE_PRICE_STUDIO_MONTHLY: data.stripe?.studioMonthly,
+          };
+          const missing = Object.entries(required).filter(([, value]) => !value).map(([key]) => key);
+          console.log('Required:', required);
+          console.log('Optional:', optional);
+          if (missing.length) {
+            console.error(`Missing required staging integration configuration: ${missing.join(', ')}`);
+            process.exit(1);
+          }
+          console.log('Integration configuration is ready for end-to-end testing.');
+          NODE
