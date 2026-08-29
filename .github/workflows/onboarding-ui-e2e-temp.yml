@@ -33,7 +33,7 @@ jobs:
       - name: Run real signup → login → onboarding → booking flow
         shell: bash
         run: |
-          cat > /tmp/onboarding-e2e.mjs <<'NODE'
+          cat > onboarding-e2e.mjs <<'NODE'
           import { chromium } from 'playwright';
           import { randomUUID } from 'node:crypto';
 
@@ -101,7 +101,6 @@ jobs:
               if (msg.type() === 'error') consoleErrors.push(msg.text());
             });
 
-            // 1) Signup real pela UI.
             await page.goto(`${APP_URL}/signup`, { waitUntil: 'networkidle' });
             await page.locator('input[name="name"]').fill('Barbeiro UI E2E');
             await page.locator('input[name="phone"]').fill('51999990000');
@@ -114,7 +113,6 @@ jobs:
             userId = authUser.id;
             console.log('✓ Signup UI created Auth user');
 
-            // Se confirmação de e-mail estiver ativa, confirmar pelo Admin para prosseguir no E2E.
             if (!authUser.email_confirmed_at) {
               const confirm = await admin(`/auth/v1/admin/users/${userId}`, {
                 method: 'PUT',
@@ -124,7 +122,6 @@ jobs:
               console.log('✓ Email confirmation requirement handled for test user');
             }
 
-            // 2) Login real pela UI, sempre em sessão limpa.
             await context.clearCookies();
             await page.goto(`${APP_URL}/login?next=/onboarding`, { waitUntil: 'networkidle' });
             await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
@@ -135,7 +132,6 @@ jobs:
             await page.waitForURL(/\/onboarding(?:\?|$)/, { timeout: 15000 });
             console.log('✓ Login UI redirected to onboarding');
 
-            // 3) Onboarding publicado: defaults e grupos reais.
             await page.getByRole('heading', { name: 'Seu link em poucos passos' }).waitFor();
             await page.getByText('Grupo 1', { exact: true }).waitFor();
             await page.getByText('Grupo 2', { exact: true }).waitFor();
@@ -161,7 +157,6 @@ jobs:
             await page.getByRole('heading', { name: business }).waitFor();
             console.log('✓ Onboarding UI saved and redirected to dashboard');
 
-            // 4) Conferência direta no banco após o submit da UI.
             const [profileRes, serviceRes, rulesRes, subscriptionRes] = await Promise.all([
               admin(`/rest/v1/public_profiles?user_id=eq.${userId}&select=business_name,slug`),
               admin(`/rest/v1/services?user_id=eq.${userId}&active=eq.true&select=id,name,duration_minutes,price_cents`),
@@ -178,7 +173,6 @@ jobs:
             if (subscriptionRows.length !== 0) throw new Error('Onboarding incorrectly created a paid subscription');
             console.log('✓ DB: profile + 1 service + 6 rules + 0 subscriptions');
 
-            // 5) Link público e reserva pela UI.
             await page.goto(`${APP_URL}/${slug}`, { waitUntil: 'networkidle' });
             await page.getByRole('heading', { name: business }).waitFor();
             await page.locator('input[type="date"]').fill(nextMonday());
@@ -192,7 +186,6 @@ jobs:
             await page.getByRole('heading', { name: /Agendamento confirmado/ }).waitFor({ timeout: 15000 });
             console.log('✓ Public booking UI created appointment');
 
-            // 6) Dashboard mostra o cliente criado.
             await page.goto(`${APP_URL}/dashboard`, { waitUntil: 'networkidle' });
             await page.getByText('Cliente UI E2E', { exact: true }).waitFor({ timeout: 15000 });
             const appointmentRes = await admin(`/rest/v1/appointments?user_id=eq.${userId}&client_email=eq.cliente-${id}%40example.com&select=id,status`);
@@ -222,4 +215,4 @@ jobs:
             }
           }
           NODE
-          node /tmp/onboarding-e2e.mjs
+          node onboarding-e2e.mjs
