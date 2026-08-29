@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: users (DADOS PRIVADOS - apenas dono)
+    // ═══════════════════════════════════════════════════════
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: publicProfiles (DADOS PÚBLICOS - leitura aberta)
+    // ═══════════════════════════════════════════════════════
+    match /publicProfiles/{profileId} {
+      allow read: if true;
+      allow create: if request.auth != null && request.auth.uid == profileId;
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: services (leitura pública, escrita pelo dono)
+    // ═══════════════════════════════════════════════════════
+    match /services/{serviceId} {
+      allow read: if true;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: availabilityRules (leitura pública, escrita pelo dono)
+    // ═══════════════════════════════════════════════════════
+    match /availabilityRules/{ruleId} {
+      allow read: if true;
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: scheduleBlocks (leitura pública, escrita pelo dono)
+    // ═══════════════════════════════════════════════════════
+    match /scheduleBlocks/{blockId} {
+      allow read: if true;
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: appointments (APENAS via API /api/book)
+    // ═══════════════════════════════════════════════════════
+    match /appointments/{appointmentId} {
+      // Bloquear criação pública direta - apenas via API segura
+      allow create: if false;
+
+      // Leitura: profissional dono OU cliente (via token temporário)
+      allow read: if request.auth != null && 
+        (request.auth.uid == resource.data.userId || 
+         request.auth.uid == resource.data.clientId);
+
+      // Atualização: apenas pelo profissional dono
+      allow update: if request.auth != null && 
+        request.auth.uid == resource.data.userId &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'notes', 'reminderSent', 'cancelledAt', 'cancelledBy', 'updatedAt']);
+
+      // Deleção: apenas pelo profissional dono
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: subscriptions (apenas leitura pelo dono, escrita via webhook)
+    // ═══════════════════════════════════════════════════════
+    match /subscriptions/{subscriptionId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow write: if false; // Apenas via webhooks Stripe (Cloud Functions)
+    }
+
+  }
+}
