@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
   release:
@@ -18,18 +17,45 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 🔍 Validate Tag
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          # Só permite tags v0.x.x durante desenvolvimento
+          if [[ ! $TAG =~ ^v0\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Tags v1.x.x bloqueadas — projeto ainda em desenvolvimento"
+            exit 1
+          fi
+          echo "✅ Tag $TAG validada para release de desenvolvimento"
+
       - name: 📝 Generate Release Notes
         id: release_notes
         run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          PREV_TAG=$(git tag --sort=-v:refname | grep -A1 "^$TAG$" | tail -1)
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$TAG" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
           echo "RELEASE_NOTES<<EOF" >> $GITHUB_ENV
-          git log $(git describe --tags --abbrev=0 HEAD~1)..HEAD --pretty=format:"- %s" >> $GITHUB_ENV
+          echo "## 🚧 Release de Desenvolvimento" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "> ⚠️ **Aviso:** Este é um release de desenvolvimento. Não use em produção." >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "### Mudanças desde $PREV_TAG" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          git log $PREV_TAG..$TAG --pretty=format:"- %s (%h)" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "### 📋 Checklist de Validação" >> $GITHUB_ENV
+          echo "- [ ] Ambiente de staging funcional" >> $GITHUB_ENV
+          echo "- [ ] Migrations aplicadas" >> $GITHUB_ENV
+          echo "- [ ] Build passando" >> $GITHUB_ENV
+          echo "- [ ] Testes passando" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      - name: 🏷️ Create Release
+      - name: 🏷️ Create Pre-release
         uses: softprops/action-gh-release@v1
         with:
           body: ${{ env.RELEASE_NOTES }}
-          draft: false
-          prerelease: false
+          draft: true
+          prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
