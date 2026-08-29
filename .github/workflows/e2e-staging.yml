@@ -26,8 +26,8 @@ jobs:
       - name: 📦 Install dependencies
         run: cd web && npm install --no-audit --no-fund
 
-      - name: 🧪 Run E2E Test
-        run: cd web && npx vitest run "lib/domain/*.e2e.test.ts"
+      - name: 🧪 Run E2E Tests
+        run: cd web && npx vitest run lib/domain/*.e2e.test.ts
         env:
           RUN_STAGING_E2E: '1'
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}

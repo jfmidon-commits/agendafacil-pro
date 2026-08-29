@@ -98,6 +98,32 @@ describeE2E("E2E Staging — Owner Cancellation", () => {
     await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, { method: "DELETE", headers });
   }, 30_000);
 
+  it("não permite que outro usuário cancele o agendamento", async () => {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cancel_appointment_by_owner`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ p_appointment_id: appointmentId, p_user_id: crypto.randomUUID() }),
+    });
+    expect(response.ok).toBe(false);
+    expect(await response.text()).toContain("appointment_not_found");
+
+    const appointmentResponse = await fetch(
+      `${SUPABASE_URL}/rest/v1/appointments?id=eq.${appointmentId}&select=status,cancelled_by,cancelled_at`,
+      { headers },
+    );
+    const appointments = await appointmentResponse.json();
+    expect(appointments).toHaveLength(1);
+    expect(appointments[0].status).toBe("confirmed");
+    expect(appointments[0].cancelled_by).toBeNull();
+    expect(appointments[0].cancelled_at).toBeNull();
+
+    const eventsResponse = await fetch(
+      `${SUPABASE_URL}/rest/v1/integration_events?appointment_id=eq.${appointmentId}&event_type=eq.appointment.cancelled&select=id`,
+      { headers },
+    );
+    expect(await eventsResponse.json()).toHaveLength(0);
+  });
+
   it("cancela pelo dono, registra autoria e gera um único evento", async () => {
     const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cancel_appointment_by_owner`, {
       method: "POST",
