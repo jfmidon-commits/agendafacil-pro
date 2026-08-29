@@ -1,0 +1,21 @@
+name: Sync backlog milestones
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - docs/ROADMAP.md
+      - scripts/sync_github_milestones.py
+      - .github/workflows/sync-milestones.yml
+permissions:
+  contents: read
+  issues: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create milestones and attach issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/sync_github_milestones.py

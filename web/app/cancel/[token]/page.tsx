@@ -1,0 +1,2 @@
+import CancelButton from "./cancel-button";
+export default async function CancelPage({params}:{params:Promise<{token:string}>}){const {token}=await params;return <main><div className="card" style={{maxWidth:560,margin:"40px auto"}}><h1>Cancelar agendamento</h1><p>Use este botão apenas se realmente não puder comparecer. O horário será liberado para outra pessoa.</p><CancelButton token={token}/></div></main>;}
