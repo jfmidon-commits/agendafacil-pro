@@ -135,7 +135,7 @@ describeE2E("E2E Staging — Authenticated Onboarding", () => {
     expect(response.ok).toBe(true);
 
     const servicesResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/services?select=id,name,duration_minutes,price_cents&order=created_at.asc`,
+      `${SUPABASE_URL}/rest/v1/services?user_id=eq.${userId}&select=id,name,duration_minutes,price_cents&order=created_at.asc`,
       { headers: userHeaders() },
     );
     const services = await servicesResponse.json();
@@ -187,7 +187,7 @@ describeE2E("E2E Staging — Authenticated Onboarding", () => {
     expect(profiles[0].phone).toBe("51999991234");
 
     const publicProfileResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/public_profiles?select=business_name,slug,description,city`,
+      `${SUPABASE_URL}/rest/v1/public_profiles?user_id=eq.${userId}&select=business_name,slug,description,city`,
       { headers: userHeaders() },
     );
     const publicProfiles = await publicProfileResponse.json();
@@ -201,7 +201,7 @@ describeE2E("E2E Staging — Authenticated Onboarding", () => {
       beforeRules.map((row: { id: string }) => row.id).sort(),
     );
 
-    const servicesResponse = await fetch(`${SUPABASE_URL}/rest/v1/services?select=id,name,price_cents`, { headers: userHeaders() });
+    const servicesResponse = await fetch(`${SUPABASE_URL}/rest/v1/services?user_id=eq.${userId}&select=id,name,price_cents`, { headers: userHeaders() });
     const services = await servicesResponse.json();
     expect(services).toHaveLength(1);
     expect(services[0].id).toBe(serviceId);
