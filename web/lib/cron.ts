@@ -1,5 +1,7 @@
 export function cronAuthorized(request: Request) {
-  const secret = process.env.CRON_SECRET;
+  const secret = process.env.CRON_SECRET?.trim();
   if (!secret) return false;
-  return request.headers.get("authorization") === `Bearer ${secret}`;
+
+  const authorization = request.headers.get("authorization")?.trim();
+  return authorization === `Bearer ${secret}`;
 }
