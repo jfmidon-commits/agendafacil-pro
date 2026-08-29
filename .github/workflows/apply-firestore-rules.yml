@@ -28,10 +28,13 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/service-account.json
         run: |
+          # Criar arquivo firebase.json para deploy
+          echo '{"firestore":{"rules":"config/firestore_rules.txt"}}' > firebase.json
+
           # Login com service account
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/service-account.json
 
-          # Aplicar regras
-          firebase firestore:rules:deploy --project agendafacil-pro --rules config/firestore_rules.txt
+          # Deploy das regras
+          firebase deploy --only firestore:rules --project agendafacil-pro
 
           echo "✅ Regras de segurança aplicadas!"
