@@ -18,8 +18,16 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           STAGING_URL: https://agendafacil-staging-pearl.vercel.app
         run: |
+          set -euo pipefail
+          clean_cron_secret="$(printf '%s' "$CRON_SECRET" | tr -d '\r\n')"
+
+          if [ -z "$clean_cron_secret" ]; then
+            echo "CRON_SECRET is unavailable after normalization."
+            exit 1
+          fi
+
           http_status=$(curl --silent --show-error --output /tmp/readiness.json --write-out "%{http_code}" \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "Authorization: Bearer ${clean_cron_secret}" \
             "${STAGING_URL}/api/health/integrations")
 
           cat /tmp/readiness.json
