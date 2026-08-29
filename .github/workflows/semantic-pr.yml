@@ -1,0 +1,48 @@
+name: 📝 Semantic PR
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+
+permissions:
+  pull-requests: read
+
+jobs:
+  semantic-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ✅ Validate PR Title
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            chore
+            ci
+            build
+            revert
+          scopes: |
+            booking
+            auth
+            stripe
+            whatsapp
+            api
+            ui
+            docs
+            ci
+            deps
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            O assunto do PR não pode começar com letra maiúscula.
+          wip: true

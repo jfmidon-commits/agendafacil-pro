@@ -1,0 +1,18 @@
+# Global owners
+* @jfmidon-commits
+
+# Backend API
+/backend/ @jfmidon-commits
+/web/app/api/ @jfmidon-commits
+
+# Frontend Web
+/web/app/ @jfmidon-commits
+/landing/ @jfmidon-commits
+
+# CI/CD & DevOps
+/.github/workflows/ @jfmidon-commits
+/config/ @jfmidon-commits
+
+# Documentation
+/docs/ @jfmidon-commits
+*.md @jfmidon-commits

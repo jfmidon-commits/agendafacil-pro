@@ -1,0 +1,56 @@
+version: 2
+updates:
+  # Enable version updates for npm (Next.js web app)
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Sao_Paulo"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "jfmidon-commits"
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "⬆️"
+      include: "scope"
+
+  # Enable version updates for pip (Python backend)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Sao_Paulo"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "jfmidon-commits"
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "⬆️"
+      include: "scope"
+
+  # Enable version updates for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Sao_Paulo"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "jfmidon-commits"
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "⬆️"
+      prefix-development: "⬆️ dev"
+      include: "scope"

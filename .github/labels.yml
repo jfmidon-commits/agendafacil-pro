@@ -1,0 +1,72 @@
+# Labels padrão do projeto
+- name: "bug"
+  color: "d73a4a"
+  description: "Algo não está funcionando"
+
+- name: "enhancement"
+  color: "a2eeef"
+  description: "Nova funcionalidade ou melhoria"
+
+- name: "documentation"
+  color: "0075ca"
+  description: "Melhorias na documentação"
+
+- name: "good first issue"
+  color: "7057ff"
+  description: "Bom para novos contribuidores"
+
+- name: "help wanted"
+  color: "008672"
+  description: "Precisa de ajuda da comunidade"
+
+- name: "needs-triage"
+  color: "fbca04"
+  description: "Aguardando triagem"
+
+- name: "high priority"
+  color: "b60205"
+  description: "Prioridade alta"
+
+- name: "medium priority"
+  color: "ff9f1c"
+  description: "Prioridade média"
+
+- name: "low priority"
+  color: "0e8a16"
+  description: "Prioridade baixa"
+
+- name: "in progress"
+  color: "cccccc"
+  description: "Em desenvolvimento"
+
+- name: "ready for review"
+  color: "0e8a16"
+  description: "Pronto para revisão"
+
+- name: "blocked"
+  color: "b60205"
+  description: "Bloqueado por dependência"
+
+- name: "dependencies"
+  color: "0366d6"
+  description: "Atualização de dependências"
+
+- name: "automated"
+  color: "0366d6"
+  description: "Criado automaticamente"
+
+- name: "stripe"
+  color: "635bff"
+  description: "Relacionado ao Stripe"
+
+- name: "whatsapp"
+  color: "25d366"
+  description: "Relacionado ao WhatsApp"
+
+- name: "booking"
+  color: "f97583"
+  description: "Relacionado a agendamentos"
+
+- name: "auth"
+  color: "5319e7"
+  description: "Relacionado a autenticação"
