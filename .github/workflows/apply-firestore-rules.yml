@@ -1,0 +1,37 @@
+name: Apply Firestore Security Rules
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apply-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Save Service Account Key
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$SERVICE_ACCOUNT_JSON" > /tmp/service-account.json
+
+      - name: Apply Firestore Rules
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/service-account.json
+        run: |
+          # Login com service account
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/service-account.json
+
+          # Aplicar regras
+          firebase firestore:rules:deploy --project agendafacil-pro --rules config/firestore_rules.txt
+
+          echo "✅ Regras de segurança aplicadas!"
