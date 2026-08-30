@@ -99,16 +99,16 @@ export default async function DashboardPage() {
                         <div className="row">
                           {appointment.status === "confirmed" && !started && (
                             <form action={updateAppointmentStatus.bind(null, appointment.id, "cancelled")}>
-                              <button className="danger">Cancelar</button>
+                              <button className="danger" style={{ minHeight: 44, touchAction: "manipulation" }}>Cancelar</button>
                             </form>
                           )}
                           {appointment.status === "confirmed" && started && (
                             <>
                               <form action={updateAppointmentStatus.bind(null, appointment.id, "completed")}>
-                                <button className="secondary">Concluir</button>
+                                <button className="secondary" style={{ minHeight: 44, touchAction: "manipulation" }}>Concluir</button>
                               </form>
                               <form action={updateAppointmentStatus.bind(null, appointment.id, "no_show")}>
-                                <button className="secondary">Não compareceu</button>
+                                <button className="secondary" style={{ minHeight: 44, touchAction: "manipulation" }}>Não compareceu</button>
                               </form>
                             </>
                           )}
