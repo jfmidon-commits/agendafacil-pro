@@ -46,7 +46,7 @@ jobs:
         run: cd web && npx playwright install --with-deps chromium
 
       - name: 📱 Run professional UI E2E
-        run: cd web && npx playwright test e2e/professional-flow.spec.ts e2e/copy-link.spec.ts
+        run: cd web && npx playwright test e2e/professional-flow.spec.ts e2e/copy-link.spec.ts e2e/dashboard-mobile-audit.spec.ts
         env:
           RUN_STAGING_E2E: '1'
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
