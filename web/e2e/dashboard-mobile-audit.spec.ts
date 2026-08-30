@@ -33,6 +33,10 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.innerWidth + 2);
 }
 
+function addMinutes(date: Date, minutes: number): Date {
+  return new Date(date.getTime() + minutes * 60 * 1000);
+}
+
 test.describe("Dashboard de agendamentos — auditoria mobile", () => {
   test.skip(!RUN_STAGING_E2E, "RUN_STAGING_E2E não está ativo.");
 
@@ -98,29 +102,24 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         if (serviceError) throw serviceError;
 
         // Criar disponibilidade — schema: slot_interval_minutes (int, default 30)
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const dayOfWeek = tomorrow.getDay();
         const { error: availError } = await admin
           .from("availability_rules")
           .insert({
             user_id: userId,
-            day_of_week: dayOfWeek,
-            start_time: "09:00",
-            end_time: "18:00",
+            day_of_week: new Date().getDay(),
+            start_time: "00:00",
+            end_time: "23:59",
             slot_interval_minutes: 30,
             active: true,
           });
         if (availError) throw availError;
 
-        // Criar agendamentos de teste
-        // Schema appointments: service_duration_minutes, buffer_before, buffer_after, ends_at, occupied_range
-        const baseDate = new Date(tomorrow);
-        baseDate.setHours(10, 0, 0, 0);
+        // Horário base: agora
+        const now = new Date();
 
-        // 1. Agendamento futuro confirmado
-        const futureConfirmed = new Date(baseDate);
-        const endsConfirmed = new Date(futureConfirmed.getTime() + 30 * 60 * 1000);
+        // 1. Agendamento FUTURO confirmado — agora + 4 horas
+        const futureConfirmed = addMinutes(now, 240);
+        const endsConfirmed = addMinutes(futureConfirmed, 30);
         const { error: appt1Error } = await admin
           .from("appointments")
           .insert({
@@ -141,10 +140,9 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
           });
         if (appt1Error) throw appt1Error;
 
-        // 2. Agendamento futuro cancelado
-        const futureCancelled = new Date(baseDate);
-        futureCancelled.setHours(11, 0, 0, 0);
-        const endsCancelled = new Date(futureCancelled.getTime() + 30 * 60 * 1000);
+        // 2. Agendamento FUTURO cancelado — agora + 5 horas
+        const futureCancelled = addMinutes(now, 300);
+        const endsCancelled = addMinutes(futureCancelled, 30);
         const { error: appt2Error } = await admin
           .from("appointments")
           .insert({
@@ -165,11 +163,9 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
           });
         if (appt2Error) throw appt2Error;
 
-        // 3. Agendamento passado concluído
-        const pastCompleted = new Date();
-        pastCompleted.setDate(pastCompleted.getDate() - 1);
-        pastCompleted.setHours(14, 0, 0, 0);
-        const endsCompleted = new Date(pastCompleted.getTime() + 30 * 60 * 1000);
+        // 3. Agendamento RECENTE concluído — agora - 2 horas
+        const recentCompleted = addMinutes(now, -120);
+        const endsCompleted = addMinutes(recentCompleted, 30);
         const { error: appt3Error } = await admin
           .from("appointments")
           .insert({
@@ -179,22 +175,20 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
             service_duration_minutes: 30,
             buffer_before: 0,
             buffer_after: 0,
-            starts_at: pastCompleted.toISOString(),
+            starts_at: recentCompleted.toISOString(),
             ends_at: endsCompleted.toISOString(),
             timezone: "America/Sao_Paulo",
             client_name: "Pedro Concluído",
             client_phone: "51977777777",
             client_email: "pedro@example.com",
             status: "completed",
-            occupied_range: `[${pastCompleted.toISOString()},${endsCompleted.toISOString()})`,
+            occupied_range: `[${recentCompleted.toISOString()},${endsCompleted.toISOString()})`,
           });
         if (appt3Error) throw appt3Error;
 
-        // 4. Agendamento passado no-show
-        const pastNoShow = new Date();
-        pastNoShow.setDate(pastNoShow.getDate() - 2);
-        pastNoShow.setHours(16, 0, 0, 0);
-        const endsNoShow = new Date(pastNoShow.getTime() + 30 * 60 * 1000);
+        // 4. Agendamento RECENTE no-show — agora - 3 horas
+        const recentNoShow = addMinutes(now, -180);
+        const endsNoShow = addMinutes(recentNoShow, 30);
         const { error: appt4Error } = await admin
           .from("appointments")
           .insert({
@@ -204,16 +198,39 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
             service_duration_minutes: 30,
             buffer_before: 0,
             buffer_after: 0,
-            starts_at: pastNoShow.toISOString(),
+            starts_at: recentNoShow.toISOString(),
             ends_at: endsNoShow.toISOString(),
             timezone: "America/Sao_Paulo",
             client_name: "Ana No-Show",
             client_phone: "51966666666",
             client_email: "ana@example.com",
             status: "no_show",
-            occupied_range: `[${pastNoShow.toISOString()},${endsNoShow.toISOString()})`,
+            occupied_range: `[${recentNoShow.toISOString()},${endsNoShow.toISOString()})`,
           });
         if (appt4Error) throw appt4Error;
+
+        // 5. Agendamento PASSADO confirmado — agora - 30 minutos (para testar botões de ação)
+        const pastConfirmed = addMinutes(now, -30);
+        const endsPastConfirmed = addMinutes(pastConfirmed, 30);
+        const { error: appt5Error } = await admin
+          .from("appointments")
+          .insert({
+            user_id: userId,
+            service_id: service.id,
+            service_name_snapshot: "Corte Audit",
+            service_duration_minutes: 30,
+            buffer_before: 0,
+            buffer_after: 0,
+            starts_at: pastConfirmed.toISOString(),
+            ends_at: endsPastConfirmed.toISOString(),
+            timezone: "America/Sao_Paulo",
+            client_name: "Carlos Aguardando Ação",
+            client_phone: "51955555555",
+            client_email: "carlos@example.com",
+            status: "confirmed",
+            occupied_range: `[${pastConfirmed.toISOString()},${endsPastConfirmed.toISOString()})`,
+          });
+        if (appt5Error) throw appt5Error;
 
         // Criar contexto com o viewport específico
         const context = await browser.newContext({
@@ -229,7 +246,7 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         // Verificar que o dashboard carregou
         await expect(page.getByRole("heading", { name: businessName })).toBeVisible();
 
-        // Verificar overflow horizontal
+        // Verificar overflow horizontal da PÁGINA (não da tabela)
         await expectNoHorizontalOverflow(page);
 
         // Verificar tabela de agendamentos
@@ -247,6 +264,7 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         await expect(page.locator("text=Maria Cancelada")).toBeVisible();
         await expect(page.locator("text=Pedro Concluído")).toBeVisible();
         await expect(page.locator("text=Ana No-Show")).toBeVisible();
+        await expect(page.locator("text=Carlos Aguardando Ação")).toBeVisible();
 
         // Verificar status
         await expect(page.locator("span.badge:has-text('confirmed')").first()).toBeVisible();
@@ -254,7 +272,7 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         await expect(page.locator("span.badge:has-text('completed')").first()).toBeVisible();
         await expect(page.locator("span.badge:has-text('no_show')").first()).toBeVisible();
 
-        // Verificar botão Cancelar no agendamento confirmado
+        // Verificar botão Cancelar no agendamento futuro confirmado (João)
         const cancelButton = page.locator("button.danger:has-text('Cancelar')").first();
         await expect(cancelButton).toBeVisible();
 
@@ -263,7 +281,7 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         expect(cancelBox!.width).toBeGreaterThanOrEqual(44);
         expect(cancelBox!.height).toBeGreaterThanOrEqual(44);
 
-        // Verificar botões Concluir e Não compareceu nos agendamentos passados
+        // Verificar botões Concluir e Não compareceu no agendamento passado confirmado (Carlos)
         const concluirButton = page.locator("button.secondary:has-text('Concluir')").first();
         await expect(concluirButton).toBeVisible();
 
@@ -280,16 +298,21 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         expect(noShowBox!.width).toBeGreaterThanOrEqual(44);
         expect(noShowBox!.height).toBeGreaterThanOrEqual(44);
 
-        // Verificar se há scroll horizontal na tabela (permitido se houver overflow-x: auto)
-        const hasHorizontalScroll = await page.evaluate(() => {
+        // Verificar se há scroll horizontal interno na tabela (permitido/intencional)
+        const tableScrollInfo = await page.evaluate(() => {
           const tableContainer = document.querySelector("div[style*='overflowX: auto']");
           if (tableContainer) {
-            return tableContainer.scrollWidth > tableContainer.clientWidth;
+            return {
+              scrollWidth: tableContainer.scrollWidth,
+              clientWidth: tableContainer.clientWidth,
+              hasHorizontalScroll: tableContainer.scrollWidth > tableContainer.clientWidth,
+            };
           }
-          return false;
+          return null;
         });
 
-        await expectNoHorizontalOverflow(page);
+        // Scroll horizontal interno da tabela é comportamento intencional, não bug
+        console.log(`Table scroll info for ${viewport.name}:`, tableScrollInfo);
 
         // Verificar legibilidade
         const joaoCell = page.locator("td:has-text('João Confirmado')").first();
@@ -301,6 +324,20 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         // Verificar navegação superior
         await expect(page.locator("nav")).toBeVisible();
         await expect(page.locator("text=AgendaFácil")).toBeVisible();
+
+        // === ESTADO VAZIO ===
+        // Deletar todos os appointments e recarregar
+        await admin.from("appointments").delete().eq("user_id", userId);
+
+        // Recarregar página
+        await page.reload();
+        await page.waitForURL(/\/dashboard$/, { timeout: 20_000 });
+
+        // Verificar estado vazio
+        await expect(page.locator("text=Nenhum agendamento recente ou futuro.")).toBeVisible();
+
+        // Verificar que a tabela não está mais presente
+        await expect(page.locator("table")).not.toBeVisible();
 
         await context.close();
       } finally {
