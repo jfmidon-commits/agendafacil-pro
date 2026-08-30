@@ -33,7 +33,6 @@ jobs:
           MAKE_APPOINTMENT_WEBHOOK_URL_INPUT: ${{ secrets.MAKE_APPOINTMENT_WEBHOOK_URL }}
           MAKE_REMINDER_WEBHOOK_URL_INPUT: ${{ secrets.MAKE_REMINDER_WEBHOOK_URL }}
           MAKE_BILLING_WEBHOOK_URL_INPUT: ${{ secrets.MAKE_BILLING_WEBHOOK_URL }}
-          GITHUB_STEP_SUMMARY_FILE: ${{ github.step_summary }}
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -48,7 +47,7 @@ jobs:
           const makeAppointment = clean(process.env.MAKE_APPOINTMENT_WEBHOOK_URL_INPUT);
           const makeReminder = clean(process.env.MAKE_REMINDER_WEBHOOK_URL_INPUT);
           const makeBilling = clean(process.env.MAKE_BILLING_WEBHOOK_URL_INPUT);
-          const summaryFile = process.env.GITHUB_STEP_SUMMARY_FILE;
+          const summaryFile = process.env.GITHUB_STEP_SUMMARY;
 
           const canonicalAppUrl = 'https://agendafacil-staging-pearl.vercel.app';
           const webhookUrl = `${canonicalAppUrl}/api/stripe/webhook`;
