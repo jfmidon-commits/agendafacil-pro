@@ -83,21 +83,21 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
           });
         if (profileError) throw profileError;
 
-        // Criar serviço
+        // Criar serviço — schema: duration_minutes (int), price_cents (int)
         const { data: service, error: serviceError } = await admin
           .from("services")
           .insert({
             user_id: userId,
             name: "Corte Audit",
-            duration: 30,
-            price: 35.00,
+            duration_minutes: 30,
+            price_cents: 3500,
             active: true,
           })
           .select("id")
           .single();
         if (serviceError) throw serviceError;
 
-        // Criar disponibilidade
+        // Criar disponibilidade — schema: slot_interval_minutes (int, default 30)
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         const dayOfWeek = tomorrow.getDay();
@@ -108,46 +108,60 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
             day_of_week: dayOfWeek,
             start_time: "09:00",
             end_time: "18:00",
-            slot_interval: 30,
+            slot_interval_minutes: 30,
+            active: true,
           });
         if (availError) throw availError;
 
         // Criar agendamentos de teste
+        // Schema appointments: service_duration_minutes, buffer_before, buffer_after, ends_at, occupied_range
         const baseDate = new Date(tomorrow);
         baseDate.setHours(10, 0, 0, 0);
 
         // 1. Agendamento futuro confirmado
         const futureConfirmed = new Date(baseDate);
+        const endsConfirmed = new Date(futureConfirmed.getTime() + 30 * 60 * 1000);
         const { error: appt1Error } = await admin
           .from("appointments")
           .insert({
             user_id: userId,
             service_id: service.id,
             service_name_snapshot: "Corte Audit",
+            service_duration_minutes: 30,
+            buffer_before: 0,
+            buffer_after: 0,
             starts_at: futureConfirmed.toISOString(),
+            ends_at: endsConfirmed.toISOString(),
             timezone: "America/Sao_Paulo",
             client_name: "João Confirmado",
             client_phone: "51999999999",
             client_email: "joao@example.com",
             status: "confirmed",
+            occupied_range: `[${futureConfirmed.toISOString()},${endsConfirmed.toISOString()})`,
           });
         if (appt1Error) throw appt1Error;
 
         // 2. Agendamento futuro cancelado
         const futureCancelled = new Date(baseDate);
         futureCancelled.setHours(11, 0, 0, 0);
+        const endsCancelled = new Date(futureCancelled.getTime() + 30 * 60 * 1000);
         const { error: appt2Error } = await admin
           .from("appointments")
           .insert({
             user_id: userId,
             service_id: service.id,
             service_name_snapshot: "Corte Audit",
+            service_duration_minutes: 30,
+            buffer_before: 0,
+            buffer_after: 0,
             starts_at: futureCancelled.toISOString(),
+            ends_at: endsCancelled.toISOString(),
             timezone: "America/Sao_Paulo",
             client_name: "Maria Cancelada",
             client_phone: "51988888888",
             client_email: "maria@example.com",
             status: "cancelled",
+            occupied_range: `[${futureCancelled.toISOString()},${endsCancelled.toISOString()})`,
           });
         if (appt2Error) throw appt2Error;
 
@@ -155,18 +169,24 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         const pastCompleted = new Date();
         pastCompleted.setDate(pastCompleted.getDate() - 1);
         pastCompleted.setHours(14, 0, 0, 0);
+        const endsCompleted = new Date(pastCompleted.getTime() + 30 * 60 * 1000);
         const { error: appt3Error } = await admin
           .from("appointments")
           .insert({
             user_id: userId,
             service_id: service.id,
             service_name_snapshot: "Corte Audit",
+            service_duration_minutes: 30,
+            buffer_before: 0,
+            buffer_after: 0,
             starts_at: pastCompleted.toISOString(),
+            ends_at: endsCompleted.toISOString(),
             timezone: "America/Sao_Paulo",
             client_name: "Pedro Concluído",
             client_phone: "51977777777",
             client_email: "pedro@example.com",
             status: "completed",
+            occupied_range: `[${pastCompleted.toISOString()},${endsCompleted.toISOString()})`,
           });
         if (appt3Error) throw appt3Error;
 
@@ -174,18 +194,24 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         const pastNoShow = new Date();
         pastNoShow.setDate(pastNoShow.getDate() - 2);
         pastNoShow.setHours(16, 0, 0, 0);
+        const endsNoShow = new Date(pastNoShow.getTime() + 30 * 60 * 1000);
         const { error: appt4Error } = await admin
           .from("appointments")
           .insert({
             user_id: userId,
             service_id: service.id,
             service_name_snapshot: "Corte Audit",
+            service_duration_minutes: 30,
+            buffer_before: 0,
+            buffer_after: 0,
             starts_at: pastNoShow.toISOString(),
+            ends_at: endsNoShow.toISOString(),
             timezone: "America/Sao_Paulo",
             client_name: "Ana No-Show",
             client_phone: "51966666666",
             client_email: "ana@example.com",
             status: "no_show",
+            occupied_range: `[${pastNoShow.toISOString()},${endsNoShow.toISOString()})`,
           });
         if (appt4Error) throw appt4Error;
 
@@ -207,9 +233,6 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         await expectNoHorizontalOverflow(page);
 
         // Verificar tabela de agendamentos
-        const tableContainer = page.locator("div", { has: page.locator("table") }).first();
-
-        // Verificar se a tabela está visível
         await expect(page.locator("table")).toBeVisible();
 
         // Verificar colunas específicas
@@ -235,7 +258,6 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         const cancelButton = page.locator("button.danger:has-text('Cancelar')").first();
         await expect(cancelButton).toBeVisible();
 
-        // Verificar touch target do botão Cancelar
         const cancelBox = await cancelButton.boundingBox();
         expect(cancelBox).not.toBeNull();
         expect(cancelBox!.width).toBeGreaterThanOrEqual(44);
@@ -248,7 +270,6 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         const noShowButton = page.locator("button.secondary:has-text('Não compareceu')").first();
         await expect(noShowButton).toBeVisible();
 
-        // Verificar touch targets dos botões de ação
         const concluirBox = await concluirButton.boundingBox();
         expect(concluirBox).not.toBeNull();
         expect(concluirBox!.width).toBeGreaterThanOrEqual(44);
@@ -259,7 +280,7 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
         expect(noShowBox!.width).toBeGreaterThanOrEqual(44);
         expect(noShowBox!.height).toBeGreaterThanOrEqual(44);
 
-        // Verificar se há scroll horizontal na tabela (permitido se for overflow-x: auto)
+        // Verificar se há scroll horizontal na tabela (permitido se houver overflow-x: auto)
         const hasHorizontalScroll = await page.evaluate(() => {
           const tableContainer = document.querySelector("div[style*='overflowX: auto']");
           if (tableContainer) {
@@ -268,15 +289,12 @@ test.describe("Dashboard de agendamentos — auditoria mobile", () => {
           return false;
         });
 
-        // Scroll horizontal é aceitável se houver overflow-x: auto
-        // Mas vamos verificar se o conteúdo principal da página não tem overflow
         await expectNoHorizontalOverflow(page);
 
-        // Verificar legibilidade — nomes não devem estar sobrepostos
+        // Verificar legibilidade
         const joaoCell = page.locator("td:has-text('João Confirmado')").first();
         await expect(joaoCell).toBeVisible();
 
-        // Verificar que o serviço é legível
         const serviceCell = page.locator("td:has-text('Corte Audit')").first();
         await expect(serviceCell).toBeVisible();
 
