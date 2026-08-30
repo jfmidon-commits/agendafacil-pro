@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   bootstrap:
-    name: Sync existing integration secrets and bootstrap Stripe TEST
+    name: Sync existing integration secrets and bootstrap Stripe TEST + Make
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout
@@ -30,6 +30,10 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           STRIPE_SECRET_KEY_INPUT: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET_INPUT: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          MAKE_API_TOKEN_INPUT: ${{ secrets.MAKE_API_TOKEN }}
+          MAKE_API_BASE_URL_INPUT: ${{ secrets.MAKE_API_BASE_URL }}
+          MAKE_ORGANIZATION_ID_INPUT: ${{ secrets.MAKE_ORGANIZATION_ID }}
+          MAKE_TEAM_ID_INPUT: ${{ secrets.MAKE_TEAM_ID }}
           MAKE_APPOINTMENT_WEBHOOK_URL_INPUT: ${{ secrets.MAKE_APPOINTMENT_WEBHOOK_URL }}
           MAKE_REMINDER_WEBHOOK_URL_INPUT: ${{ secrets.MAKE_REMINDER_WEBHOOK_URL }}
           MAKE_BILLING_WEBHOOK_URL_INPUT: ${{ secrets.MAKE_BILLING_WEBHOOK_URL }}
@@ -40,22 +44,27 @@ jobs:
 
           const clean = (value) => (value || '').replace(/[\r\n]/g, '').trim();
           const projectId = clean(process.env.VERCEL_PROJECT_ID);
-          const teamId = clean(process.env.VERCEL_ORG_ID);
+          const vercelTeamId = clean(process.env.VERCEL_ORG_ID);
           const vercelToken = clean(process.env.VERCEL_TOKEN);
           const stripeKey = clean(process.env.STRIPE_SECRET_KEY_INPUT);
           const existingStripeWebhookSecret = clean(process.env.STRIPE_WEBHOOK_SECRET_INPUT);
-          const makeAppointment = clean(process.env.MAKE_APPOINTMENT_WEBHOOK_URL_INPUT);
+          const makeApiToken = clean(process.env.MAKE_API_TOKEN_INPUT);
+          const makeApiBaseInput = clean(process.env.MAKE_API_BASE_URL_INPUT).replace(/\/$/, '');
+          const makeOrganizationIdInput = clean(process.env.MAKE_ORGANIZATION_ID_INPUT);
+          const makeTeamIdInput = clean(process.env.MAKE_TEAM_ID_INPUT);
+          let makeAppointment = clean(process.env.MAKE_APPOINTMENT_WEBHOOK_URL_INPUT);
           const makeReminder = clean(process.env.MAKE_REMINDER_WEBHOOK_URL_INPUT);
           const makeBilling = clean(process.env.MAKE_BILLING_WEBHOOK_URL_INPUT);
           const summaryFile = process.env.GITHUB_STEP_SUMMARY;
 
           const canonicalAppUrl = 'https://agendafacil-staging-pearl.vercel.app';
-          const webhookUrl = `${canonicalAppUrl}/api/stripe/webhook`;
+          const stripeWebhookUrl = `${canonicalAppUrl}/api/stripe/webhook`;
           const expectedStripeAccount = 'acct_1U9otY7P2nwS1Www';
           const monthlyLookup = 'agendafacil_pro_monthly';
           const annualLookup = 'agendafacil_pro_annual';
+          const makeHookName = 'AgendaFacil Staging';
 
-          if (!projectId || !teamId || !vercelToken) {
+          if (!projectId || !vercelTeamId || !vercelToken) {
             throw new Error('Vercel staging API credentials are unavailable.');
           }
 
@@ -64,32 +73,83 @@ jobs:
             stripeKeyPresent: Boolean(stripeKey),
             stripeKeyValidated: false,
             stripeCatalogValidated: false,
+            stripePortalConfigured: false,
             stripeWebhookEndpoint: false,
             stripeWebhookSecretSynced: false,
+            makeApiTokenPresent: Boolean(makeApiToken),
+            makeApiConnected: false,
+            makeHookPresent: false,
             makeAppointmentPresent: Boolean(makeAppointment),
-            makeReminderPresent: Boolean(makeReminder),
             makeReminderEffective: Boolean(makeReminder || makeAppointment),
             makeBillingPresent: Boolean(makeBilling),
             vercelEnvUpdated: false,
           };
 
-          async function stripeRequest(path, init = {}) {
-            const response = await fetch(`https://api.stripe.com${path}`, {
-              ...init,
-              headers: {
-                Authorization: `Bearer ${stripeKey}`,
-                ...(init.headers || {}),
-              },
-            });
+          async function requestJson(url, init = {}, label = 'request') {
+            const response = await fetch(url, init);
             let data = null;
             try { data = await response.json(); } catch {}
             if (!response.ok) {
-              throw new Error(`Stripe TEST request failed for ${path} with HTTP ${response.status}.`);
+              throw new Error(`${label} failed with HTTP ${response.status}.`);
             }
             return data;
           }
 
-          let stripeWebhookSecret = existingStripeWebhookSecret;
+          async function stripeRequest(path, init = {}) {
+            return requestJson(
+              `https://api.stripe.com${path}`,
+              {
+                ...init,
+                headers: {
+                  Authorization: `Bearer ${stripeKey}`,
+                  ...(init.headers || {}),
+                },
+              },
+              `Stripe TEST request for ${path}`,
+            );
+          }
+
+          async function makeRequest(base, path, init = {}) {
+            return requestJson(
+              `${base}${path}`,
+              {
+                ...init,
+                headers: {
+                  Authorization: `Token ${makeApiToken}`,
+                  Accept: 'application/json',
+                  ...(init.headers || {}),
+                },
+              },
+              `Make request for ${path}`,
+            );
+          }
+
+          async function discoverMakeBase() {
+            const candidates = [
+              makeApiBaseInput,
+              'https://eu1.make.com/api/v2',
+              'https://eu2.make.com/api/v2',
+              'https://us1.make.com/api/v2',
+              'https://us2.make.com/api/v2',
+            ].filter(Boolean);
+
+            for (const base of [...new Set(candidates)]) {
+              try {
+                const response = await fetch(`${base}/organizations?pg%5Blimit%5D=100`, {
+                  headers: {
+                    Authorization: `Token ${makeApiToken}`,
+                    Accept: 'application/json',
+                  },
+                });
+                if (response.ok) {
+                  const data = await response.json();
+                  return { base, organizations: Array.isArray(data?.organizations) ? data.organizations : [] };
+                }
+              } catch {}
+            }
+            throw new Error('MAKE_API_TOKEN could not authenticate to a supported Make zone.');
+          }
+
           const vercelEnvs = [];
           const addSensitiveEnv = (key, value) => {
             if (!value) return;
@@ -102,16 +162,22 @@ jobs:
             });
           };
 
+          // Stripe TEST bootstrap. Never accepts a live key.
+          let stripeWebhookSecret = existingStripeWebhookSecret;
           if (stripeKey) {
             if (!(stripeKey.startsWith('sk_test_') || stripeKey.startsWith('rk_test_'))) {
               throw new Error('Refusing to use a Stripe key that is not explicitly TEST mode.');
             }
 
-            const account = await stripeRequest('/v1/account');
-            if (account?.id !== expectedStripeAccount) {
-              throw new Error('Stripe TEST key belongs to an unexpected account.');
+            // Standard test keys can verify the account directly. Restricted keys may not
+            // include account-read permission, so the catalog below remains the authoritative
+            // validation for them.
+            if (stripeKey.startsWith('sk_test_')) {
+              const account = await stripeRequest('/v1/account');
+              if (account?.id !== expectedStripeAccount) {
+                throw new Error('Stripe TEST key belongs to an unexpected account.');
+              }
             }
-            status.stripeKeyValidated = true;
 
             const priceParams = new URLSearchParams();
             priceParams.append('active', 'true');
@@ -127,15 +193,63 @@ jobs:
             if (priceData.some((price) => price.livemode !== false)) {
               throw new Error('Refusing to use a Stripe catalog that is not TEST mode.');
             }
+            status.stripeKeyValidated = true;
             status.stripeCatalogValidated = true;
+
+            // Configure Customer Portal if no active TEST configuration exists.
+            const portalList = await stripeRequest('/v1/billing_portal/configurations?active=true&limit=100');
+            let portalConfig = (Array.isArray(portalList?.data) ? portalList.data : [])
+              .find((item) => item?.livemode === false);
+            if (!portalConfig) {
+              const form = new URLSearchParams();
+              form.set('default_return_url', `${canonicalAppUrl}/dashboard/billing`);
+              form.set('features[customer_update][enabled]', 'true');
+              form.append('features[customer_update][allowed_updates][]', 'email');
+              form.append('features[customer_update][allowed_updates][]', 'name');
+              form.append('features[customer_update][allowed_updates][]', 'phone');
+              form.set('features[invoice_history][enabled]', 'true');
+              form.set('features[payment_method_update][enabled]', 'true');
+              form.set('features[subscription_cancel][enabled]', 'true');
+              form.set('features[subscription_cancel][mode]', 'at_period_end');
+              form.set('features[subscription_cancel][cancellation_reason][enabled]', 'true');
+              for (const reason of ['too_expensive', 'missing_features', 'unused', 'other']) {
+                form.append('features[subscription_cancel][cancellation_reason][options][]', reason);
+              }
+              portalConfig = await stripeRequest('/v1/billing_portal/configurations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: form.toString(),
+              });
+            }
+            if (!portalConfig?.id || portalConfig?.livemode !== false) {
+              throw new Error('Stripe TEST Customer Portal configuration could not be validated.');
+            }
+            status.stripePortalConfigured = true;
 
             const endpointList = await stripeRequest('/v1/webhook_endpoints?limit=100');
             const endpoints = Array.isArray(endpointList?.data) ? endpointList.data : [];
-            let endpoint = endpoints.find((item) => item.url === webhookUrl && item.status !== 'disabled');
+            let matching = endpoints.filter((item) => item.url === stripeWebhookUrl && item.status !== 'disabled');
+            let endpoint = matching[0] || null;
+
+            // A webhook signing secret is only returned at creation time. If an endpoint
+            // already exists but the secret is unavailable, disable all matching orphaned
+            // TEST endpoints and recreate one so the signing secret can be captured safely.
+            if (endpoint && !stripeWebhookSecret) {
+              for (const orphan of matching) {
+                const disable = new URLSearchParams();
+                disable.set('disabled', 'true');
+                await stripeRequest(`/v1/webhook_endpoints/${encodeURIComponent(orphan.id)}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                  body: disable.toString(),
+                });
+              }
+              endpoint = null;
+            }
 
             if (!endpoint) {
               const form = new URLSearchParams();
-              form.set('url', webhookUrl);
+              form.set('url', stripeWebhookUrl);
               form.set('description', 'AgendaFacil staging Stripe TEST webhook');
               for (const event of [
                 'checkout.session.completed',
@@ -159,11 +273,7 @@ jobs:
               }
             }
 
-            status.stripeWebhookEndpoint = Boolean(endpoint?.id);
-            if (!stripeWebhookSecret && endpoint?.id) {
-              console.log('Stripe TEST webhook endpoint exists, but no signing secret is available in GitHub secrets; not creating a duplicate endpoint.');
-            }
-
+            status.stripeWebhookEndpoint = Boolean(endpoint?.id && endpoint?.livemode === false);
             addSensitiveEnv('STRIPE_SECRET_KEY', stripeKey);
             if (stripeWebhookSecret) {
               addSensitiveEnv('STRIPE_WEBHOOK_SECRET', stripeWebhookSecret);
@@ -173,6 +283,74 @@ jobs:
             console.log('STRIPE_SECRET_KEY is not stored in GitHub secrets; Stripe runtime configuration was not changed.');
           }
 
+          // Make bootstrap. If a direct appointment webhook URL is already stored, preserve it.
+          // Otherwise, a Make API token can create/discover a staging gateway webhook safely.
+          if (!makeAppointment && makeApiToken) {
+            const discovered = await discoverMakeBase();
+            status.makeApiConnected = true;
+
+            const organizations = discovered.organizations;
+            let organizationId = makeOrganizationIdInput;
+            if (!organizationId) {
+              if (organizations.length !== 1) {
+                throw new Error('Make organization is ambiguous; store MAKE_ORGANIZATION_ID as a GitHub secret.');
+              }
+              organizationId = String(organizations[0].id);
+            }
+
+            const teamsData = await makeRequest(
+              discovered.base,
+              `/teams?organizationId=${encodeURIComponent(organizationId)}&pg%5Blimit%5D=100`,
+            );
+            const teams = Array.isArray(teamsData?.teams) ? teamsData.teams : [];
+            let makeTeamId = makeTeamIdInput;
+            if (!makeTeamId) {
+              if (teams.length !== 1) {
+                throw new Error('Make team is ambiguous; store MAKE_TEAM_ID as a GitHub secret.');
+              }
+              makeTeamId = String(teams[0].id);
+            }
+
+            const hooksData = await makeRequest(
+              discovered.base,
+              `/hooks?teamId=${encodeURIComponent(makeTeamId)}&typeName=gateway-webhook&pg%5Blimit%5D=100`,
+            );
+            const hooks = Array.isArray(hooksData?.hooks) ? hooksData.hooks : [];
+            let hook = hooks.find((item) => item?.name === makeHookName && item?.enabled !== false) || null;
+
+            if (!hook) {
+              const created = await makeRequest(discovered.base, '/hooks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  name: makeHookName,
+                  teamId: String(makeTeamId),
+                  typeName: 'gateway-webhook',
+                  method: false,
+                  headers: false,
+                  stringify: false,
+                }),
+              });
+              hook = typeof created?.hook === 'object' ? created.hook : null;
+              const hookId = hook?.id || created?.hook;
+              if ((!hook || !hook.url) && hookId) {
+                const details = await makeRequest(discovered.base, `/hooks/${encodeURIComponent(hookId)}`);
+                hook = details?.hook || details;
+              }
+            }
+
+            if (!hook?.url || !String(hook.url).startsWith('https://')) {
+              throw new Error('Make staging webhook was created/discovered without a valid HTTPS URL.');
+            }
+            makeAppointment = clean(hook.url);
+            status.makeHookPresent = true;
+          } else if (makeAppointment) {
+            status.makeHookPresent = true;
+          }
+
+          status.makeAppointmentPresent = Boolean(makeAppointment);
+          status.makeReminderEffective = Boolean(makeReminder || makeAppointment);
+
           addSensitiveEnv('MAKE_APPOINTMENT_WEBHOOK_URL', makeAppointment);
           addSensitiveEnv('MAKE_REMINDER_WEBHOOK_URL', makeReminder);
           addSensitiveEnv('MAKE_BILLING_WEBHOOK_URL', makeBilling);
@@ -180,7 +358,7 @@ jobs:
           if (vercelEnvs.length) {
             const endpoint = new URL(`https://api.vercel.com/v10/projects/${encodeURIComponent(projectId)}/env`);
             endpoint.searchParams.set('upsert', 'true');
-            endpoint.searchParams.set('teamId', teamId);
+            endpoint.searchParams.set('teamId', vercelTeamId);
             const response = await fetch(endpoint, {
               method: 'POST',
               headers: {
@@ -201,7 +379,7 @@ jobs:
             }
             status.vercelEnvUpdated = true;
           } else {
-            console.log('No integration secrets are currently stored in GitHub; Vercel integration env was unchanged.');
+            console.log('No integration secrets are currently available for Vercel sync.');
           }
 
           const mark = (value) => value ? '✅' : '⬜';
@@ -210,11 +388,14 @@ jobs:
             '',
             `- ${mark(status.vercelAccess)} Vercel API access`,
             `- ${mark(status.stripeKeyPresent)} Stripe TEST key stored in GitHub`,
-            `- ${mark(status.stripeKeyValidated)} Stripe TEST key validated against expected account`,
-            `- ${mark(status.stripeCatalogValidated)} Stripe Pro monthly/annual catalog validated`,
+            `- ${mark(status.stripeKeyValidated)} Stripe TEST key/catalog validated`,
+            `- ${mark(status.stripePortalConfigured)} Stripe TEST Customer Portal configured`,
             `- ${mark(status.stripeWebhookEndpoint)} Stripe TEST webhook endpoint present`,
             `- ${mark(status.stripeWebhookSecretSynced)} Stripe webhook signing secret available for Vercel sync`,
-            `- ${mark(status.makeAppointmentPresent)} Make appointment webhook stored in GitHub`,
+            `- ${mark(status.makeApiTokenPresent)} Make API token stored in GitHub`,
+            `- ${mark(status.makeApiConnected)} Make API authenticated`,
+            `- ${mark(status.makeHookPresent)} Make staging webhook present`,
+            `- ${mark(status.makeAppointmentPresent)} Make appointment webhook available`,
             `- ${mark(status.makeReminderEffective)} Make reminder effective (specific or appointment fallback)`,
             `- ${mark(status.makeBillingPresent)} Make billing webhook stored (optional)`,
             `- ${mark(status.vercelEnvUpdated)} Integration environment updated in Vercel`,
