@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { updateAppointmentStatus } from "./actions";
+import CopyLinkButton from "./copy-link-button";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -35,6 +36,8 @@ export default async function DashboardPage() {
     (appointment) => appointment.status === "confirmed" && new Date(appointment.starts_at) >= now,
   ).length || 0;
 
+  const publicUrl = `${process.env.NEXT_PUBLIC_APP_URL || ""}/${publicProfile.slug}`;
+
   return (
     <main>
       <div className="row">
@@ -42,7 +45,8 @@ export default async function DashboardPage() {
           <span className="badge">Plano {plan}</span>
           <h1>{publicProfile.business_name}</h1>
         </div>
-        <div style={{ marginLeft: "auto" }}>
+        <div style={{ marginLeft: "auto" }} className="row">
+          <CopyLinkButton publicUrl={publicUrl} />
           <Link className="button secondary" href={`/${publicProfile.slug}`}>Abrir link público</Link>
         </div>
       </div>
