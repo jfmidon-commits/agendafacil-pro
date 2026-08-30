@@ -52,7 +52,7 @@ export default function CopyLinkButton({ publicUrl }: { publicUrl: string }) {
       disabled={copyState === "copied"}
       aria-live="polite"
       aria-label={label}
-      style={{ minWidth: 120, touchAction: "manipulation" }}
+      style={{ minWidth: 120, minHeight: 44, touchAction: "manipulation" }}
     >
       {label}
     </button>
