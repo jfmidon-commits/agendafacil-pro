@@ -6,6 +6,7 @@ const integrationSettingKeys = [
   "make_appointment_webhook_url",
   "make_reminder_webhook_url",
   "make_billing_webhook_url",
+  "whatsapp_delivery_verified_at",
 ] as const;
 
 type IntegrationSettingKey = (typeof integrationSettingKeys)[number];
@@ -56,6 +57,13 @@ export async function getMakeConfigurationStatus() {
     reminder: Boolean(endpoints.reminder),
     reminderEffective: Boolean(endpoints.reminder || endpoints.appointment),
     billing: Boolean(endpoints.billing),
+  };
+}
+
+export async function getWhatsAppDeliveryStatus() {
+  const stored = await storedMakeConfig();
+  return {
+    deliveryVerified: Boolean(clean(stored.whatsapp_delivery_verified_at)),
   };
 }
 
