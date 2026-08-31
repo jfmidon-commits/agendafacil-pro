@@ -4,11 +4,9 @@ import { deliverIntegrationEvent } from "../integrations/make";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const STAGING_URL = process.env.NEXT_PUBLIC_APP_URL_STAGING || process.env.NEXT_PUBLIC_APP_URL || "";
-const MAKE_APPOINTMENT_WEBHOOK_URL = process.env.MAKE_APPOINTMENT_WEBHOOK_URL || "";
 const RUN_STAGING_E2E = process.env.RUN_STAGING_E2E === "1";
 const SAFE_TARGET = STAGING_URL.includes("staging") || STAGING_URL.includes("localhost");
-const MAKE_CONFIGURED = Boolean(MAKE_APPOINTMENT_WEBHOOK_URL);
-const describeMake = RUN_STAGING_E2E && MAKE_CONFIGURED ? describe : describe.skip;
+const describeMake = RUN_STAGING_E2E ? describe : describe.skip;
 
 if (RUN_STAGING_E2E && (!SUPABASE_URL || !SERVICE_KEY || !STAGING_URL)) {
   throw new Error("RUN_STAGING_E2E=1 exige URL e credenciais de staging.");
@@ -225,8 +223,8 @@ describeMake("E2E Staging — Make webhook", () => {
     const reminderRows = (await reminderCreate.json()) as { id: string }[];
     const reminderEventId = reminderRows[0].id;
 
-    // Valida o segundo tipo de payload contra o webhook real; a função usa
-    // MAKE_REMINDER_WEBHOOK_URL quando presente e o appointment webhook como fallback.
+    // Valida o segundo tipo de payload contra o webhook real. A resolução usa
+    // webhook específico de reminder quando configurado e o appointment webhook como fallback.
     expect(await deliverIntegrationEvent(reminderEventId)).toBe(true);
     const reminder = await waitForDelivered("appointment.reminder_due", 5_000);
     expect(reminder.attempts).toBeGreaterThan(0);
