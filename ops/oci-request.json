@@ -1,6 +1,6 @@
 {
-  "request_id": "status-check-001",
-  "operation": "run_command_status",
+  "request_id": "diagnostics-001",
+  "operation": "diagnostics",
   "instance_name": "agendafacil-evolution",
   "script_b64": ""
 }
