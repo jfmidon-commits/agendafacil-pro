@@ -14,7 +14,7 @@ on:
 
 jobs:
   e2e:
-    name: E2E Staging — API + Professional UI
+    name: E2E Staging — API + Professional UI + Billing
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment: staging
@@ -45,12 +45,13 @@ jobs:
       - name: 🎭 Install Playwright Chromium
         run: cd web && npx playwright install --with-deps chromium
 
-      - name: 📱 Run professional UI E2E
-        run: cd web && npx playwright test e2e/professional-flow.spec.ts e2e/copy-link.spec.ts e2e/dashboard-mobile-audit.spec.ts
+      - name: 📱 Run professional UI + Stripe TEST E2E
+        run: cd web && npx playwright test e2e/professional-flow.spec.ts e2e/copy-link.spec.ts e2e/dashboard-mobile-audit.spec.ts e2e/billing-flow.spec.ts
         env:
           RUN_STAGING_E2E: '1'
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           NEXT_PUBLIC_APP_URL: https://agendafacil-staging-pearl.vercel.app
           NEXT_PUBLIC_APP_URL_STAGING: https://agendafacil-staging-pearl.vercel.app
 
