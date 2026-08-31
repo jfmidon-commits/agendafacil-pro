@@ -8,7 +8,7 @@ on:
 
 jobs:
   readiness:
-    name: Check Make and Stripe configuration
+    name: Check Make, WhatsApp and Stripe readiness
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -43,6 +43,7 @@ jobs:
             NEXT_PUBLIC_APP_URL: data.appUrl,
             MAKE_APPOINTMENT_WEBHOOK_URL: data.make?.appointment,
             MAKE_REMINDER_EFFECTIVE: data.make?.reminderEffective,
+            WHATSAPP_DELIVERY_VERIFIED: data.whatsapp?.deliveryVerified,
             STRIPE_SECRET_KEY: data.stripe?.secret,
             STRIPE_WEBHOOK_SECRET: data.stripe?.webhook,
             STRIPE_PRO_MONTHLY_CATALOG: data.stripe?.proMonthly,
@@ -56,8 +57,8 @@ jobs:
           console.log('Required:', required);
           console.log('Optional:', optional);
           if (missing.length) {
-            console.error(`Missing required staging integration configuration: ${missing.join(', ')}`);
+            console.error(`Missing required staging integration readiness: ${missing.join(', ')}`);
             process.exit(1);
           }
-          console.log('Integration configuration is ready for end-to-end testing.');
+          console.log('Integrations are ready for beta validation.');
           NODE
