@@ -1,0 +1,6 @@
+{
+  "request_id": "run-command-iam-20260831-1625",
+  "instance_name": "agendafacil-evolution",
+  "dynamic_group_name": "AgendaFacilRunCommand",
+  "policy_name": "AgendaFacilRunCommandPolicy"
+}
