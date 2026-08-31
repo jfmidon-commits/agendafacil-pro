@@ -96,14 +96,14 @@ jobs:
           echo "Instance: $INSTANCE_NAME"
 
           case "$OPERATION" in
-            inventory|run_command_status|run_instance_command) ;;
+            inventory|run_command_status|run_instance_command|diagnostics|restart_agent) ;;
             *)
               echo "::error::Unsupported operation: $OPERATION"
               exit 2
               ;;
           esac
 
-          # Find instance using structured search (searches across ALL compartments)
+          # Find instance using structured search
           echo "Searching for instance across all compartments..."
           SEARCH_JSON="$(oci search resource structured-search             --query-text "query instance resources where displayName = '$INSTANCE_NAME'"             --query 'data.items[0]'             --raw-output 2>/dev/null || true)"
 
@@ -141,6 +141,37 @@ jobs:
 
             echo "=== RUN COMMAND EXECUTIONS ==="
             oci instance-agent command-execution list               --compartment-id "$INSTANCE_COMPARTMENT"               --instance-id "$IID"               --all               --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id",created:"time-created"}'               --output table || true
+            exit 0
+          fi
+
+          if [ "$OPERATION" = "diagnostics" ]; then
+            echo "=== DYNAMIC GROUPS ==="
+            oci iam dynamic-group list --all --query 'data[].{name:name,id:id}' --output table || true
+
+            echo ""
+            echo "=== POLICIES ==="
+            oci iam policy list --compartment-id "$OCI_TENANCY_OCID" --all --query 'data[].{name:name,state:"lifecycle-state"}' --output table || true
+
+            echo ""
+            echo "=== INSTANCE AGENT PLUGINS (detailed) ==="
+            oci instance-agent plugin list               --compartment-id "$INSTANCE_COMPARTMENT"               --instanceagent-id "$IID"               --all               --query 'data[].{plugin:name,status:status,version:version}'               --output table || true
+            exit 0
+          fi
+
+          if [ "$OPERATION" = "restart_agent" ]; then
+            echo "Attempting to restart instance agent via run command..."
+            RESTART_SCRIPT='#!/bin/bash
+systemctl restart oracle-cloud-agent || true
+systemctl status oracle-cloud-agent || true
+systemctl restart oci-instance-agent || true
+systemctl status oci-instance-agent || true
+echo "Agent restart attempted"'
+
+            CONTENT="$(python3 -c "import json; print(json.dumps({'source':{'sourceType':'TEXT','text':'$RESTART_SCRIPT'},'output':{'outputType':'TEXT'}}))")"
+
+            CMD_ID="$(oci instance-agent command create               --compartment-id "$INSTANCE_COMPARTMENT"               --content "$CONTENT"               --target "{\"instanceId\":\"$IID\"}"               --timeout-in-seconds 300               --display-name "github-restart-agent-$REQUEST_ID"               --query 'data.id'               --raw-output)"
+
+            echo "Submitted agent restart: $CMD_ID"
             exit 0
           fi
 
