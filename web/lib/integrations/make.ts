@@ -1,5 +1,6 @@
 import { createCancelToken } from "../cancel-token";
 import { createServiceClient } from "../supabase/service";
+import { buildWhatsAppPayload } from "./whatsapp-payload";
 
 const integrationSettingKeys = [
   "make_appointment_webhook_url",
@@ -89,6 +90,22 @@ async function buildAppointmentPayload(appointmentId: string, eventType: string)
   const exp = Math.floor(new Date(appointment.starts_at).getTime() / 1000);
   const cancelUrl = exp > Math.floor(Date.now() / 1000)
     ? `${base}/cancel/${createCancelToken(appointment.id, exp)}` : null;
+  const professionalName = professional?.name || "";
+  const professionalPhone = professional?.phone || "";
+  const businessName = publicProfile?.business_name || "";
+  const whatsapp = buildWhatsAppPayload({
+    eventType,
+    startsAt: appointment.starts_at,
+    timezone: appointment.timezone,
+    service: appointment.service_name_snapshot,
+    clientName: appointment.client_name,
+    clientPhone: appointment.client_phone,
+    professionalName,
+    professionalPhone,
+    businessName,
+    cancelUrl,
+    dashboardUrl: `${base}/dashboard`,
+  });
 
   return {
     event: eventType,
@@ -110,11 +127,12 @@ async function buildAppointmentPayload(appointmentId: string, eventType: string)
     },
     professional: {
       id: appointment.user_id,
-      name: professional?.name || "",
-      phone: professional?.phone || "",
-      businessName: publicProfile?.business_name || "",
+      name: professionalName,
+      phone: professionalPhone,
+      businessName,
       slug: publicProfile?.slug || "",
     },
+    whatsapp,
   };
 }
 
