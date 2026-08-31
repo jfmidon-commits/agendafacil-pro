@@ -79,17 +79,6 @@ jobs:
           echo "Region: $OCI_REGION"
           oci iam region-subscription list --query 'data[].{"region":"region-name","status":status}' --output table
 
-      - name: Discover compartments and locate instance
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "=== LISTING COMPARTMENTS ==="
-          oci iam compartment list --compartment-id "$OCI_TENANCY_OCID" --all --query 'data[].{name:name,id:id,state:"lifecycle-state"}' --output table
-
-          echo ""
-          echo "=== SEARCHING FOR INSTANCE ACROSS ALL COMPARTMENTS ==="
-          oci search resource structured-search --query-text "query instance resources where displayName = 'agendafacil-evolution'" --query 'data.items[].{name:"display-name",id:identifier,compartment:"compartment-id",state:"lifecycle-state"}' --output table || true
-
       - name: Execute OCI control request
         shell: bash
         run: |
@@ -101,7 +90,6 @@ jobs:
           REQUEST_ID="$(jq -r '.request_id // "unspecified"' "$REQUEST")"
           OPERATION="$(jq -r '.operation // empty' "$REQUEST")"
           INSTANCE_NAME="$(jq -r '.instance_name // "agendafacil-evolution"' "$REQUEST")"
-          COMPARTMENT_ID="$(jq -r '.compartment_id // empty' "$REQUEST")"
 
           echo "Request: $REQUEST_ID"
           echo "Operation: $OPERATION"
@@ -115,34 +103,22 @@ jobs:
               ;;
           esac
 
-          # If compartment_id is provided in request, use it; otherwise search all compartments
-          if [ -n "$COMPARTMENT_ID" ]; then
-            echo "Using provided compartment: $COMPARTMENT_ID"
-            SEARCH_COMPARTMENT="$COMPARTMENT_ID"
-          else
-            echo "Searching in root compartment and all sub-compartments..."
-            SEARCH_COMPARTMENT="$OCI_TENANCY_OCID"
-          fi
+          # Find instance using structured search (searches across ALL compartments)
+          echo "Searching for instance across all compartments..."
+          SEARCH_JSON="$(oci search resource structured-search             --query-text "query instance resources where displayName = '$INSTANCE_NAME'"             --query 'data.items[0]'             --raw-output 2>/dev/null || true)"
 
-          # Try to find instance - first in specified compartment, then search all
-          IID="$(oci compute instance list             --compartment-id "$SEARCH_COMPARTMENT"             --display-name "$INSTANCE_NAME"             --all             --query 'data[?"lifecycle-state"==`RUNNING` || "lifecycle-state"==`PROVISIONING` || "lifecycle-state"==`STARTING`][0].id'             --raw-output 2>/dev/null || true)"
-
-          # If not found, try searching across all compartments using structured search
-          if [ -z "$IID" ] || [ "$IID" = "None" ] || [ "$IID" = "null" ]; then
-            echo "Not found in primary compartment. Searching all compartments..."
-            SEARCH_RESULT="$(oci search resource structured-search               --query-text "query instance resources where displayName = '$INSTANCE_NAME'"               --query 'data.items[0].identifier' --raw-output 2>/dev/null || true)"
-            if [ -n "$SEARCH_RESULT" ] && [ "$SEARCH_RESULT" != "null" ]; then
-              IID="$SEARCH_RESULT"
-              echo "Found via search: $IID"
-            fi
-          fi
-
-          if [ -z "$IID" ] || [ "$IID" = "None" ] || [ "$IID" = "null" ]; then
+          if [ -z "$SEARCH_JSON" ] || [ "$SEARCH_JSON" = "null" ]; then
             echo "::error::Instance '$INSTANCE_NAME' was not found in any compartment"
             exit 3
           fi
 
+          IID="$(echo "$SEARCH_JSON" | jq -r '.identifier')"
+          INSTANCE_COMPARTMENT="$(echo "$SEARCH_JSON" | jq -r '."compartment-id"')"
+          INSTANCE_STATE="$(echo "$SEARCH_JSON" | jq -r '."lifecycle-state"')"
+
           echo "Instance OCID: $IID"
+          echo "Instance Compartment: $INSTANCE_COMPARTMENT"
+          echo "Instance State: $INSTANCE_STATE"
 
           if [ "$OPERATION" = "inventory" ]; then
             echo "=== INSTANCE ==="
@@ -152,19 +128,19 @@ jobs:
             oci compute instance list-vnics               --instance-id "$IID"               --query 'data[].{name:"display-name",private_ip:"private-ip",public_ip:"public-ip",subnet_id:"subnet-id"}'               --output table
 
             echo "=== INSTANCE AGENT PLUGINS ==="
-            oci instance-agent plugin list               --compartment-id "$OCI_TENANCY_OCID"               --instanceagent-id "$IID"               --all               --query 'data[].{plugin:name,status:status}'               --output table || echo "(Instance Agent plugin list may require instance-level permissions)"
+            oci instance-agent plugin list               --compartment-id "$INSTANCE_COMPARTMENT"               --instanceagent-id "$IID"               --all               --query 'data[].{plugin:name,status:status}'               --output table || echo "(Instance Agent plugin list may require instance-level permissions)"
 
             echo "=== RUN COMMAND EXECUTIONS ==="
-            oci instance-agent command-execution list               --compartment-id "$OCI_TENANCY_OCID"               --instance-id "$IID"               --all               --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id"}'               --output table || echo "(No run command executions found or permission issue)"
+            oci instance-agent command-execution list               --compartment-id "$INSTANCE_COMPARTMENT"               --instance-id "$IID"               --all               --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id"}'               --output table || echo "(No run command executions found or permission issue)"
             exit 0
           fi
 
           if [ "$OPERATION" = "run_command_status" ]; then
             echo "=== RUN COMMAND PLUGIN ==="
-            oci instance-agent plugin list               --compartment-id "$OCI_TENANCY_OCID"               --instanceagent-id "$IID"               --all               --query 'data[?name==`Compute Instance Run Command`].{plugin:name,status:status}'               --output table || true
+            oci instance-agent plugin list               --compartment-id "$INSTANCE_COMPARTMENT"               --instanceagent-id "$IID"               --all               --query 'data[?name==`Compute Instance Run Command`].{plugin:name,status:status}'               --output table || true
 
             echo "=== RUN COMMAND EXECUTIONS ==="
-            oci instance-agent command-execution list               --compartment-id "$OCI_TENANCY_OCID"               --instance-id "$IID"               --all               --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id",created:"time-created"}'               --output table || true
+            oci instance-agent command-execution list               --compartment-id "$INSTANCE_COMPARTMENT"               --instance-id "$IID"               --all               --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id",created:"time-created"}'               --output table || true
             exit 0
           fi
 
@@ -189,10 +165,10 @@ jobs:
           PY
           )"
 
-          CMD_ID="$(oci instance-agent command create             --compartment-id "$OCI_TENANCY_OCID"             --content "$CONTENT"             --target "{\"instanceId\":\"$IID\"}"             --timeout-in-seconds 600             --display-name "github-$REQUEST_ID"             --query 'data.id'             --raw-output)"
+          CMD_ID="$(oci instance-agent command create             --compartment-id "$INSTANCE_COMPARTMENT"             --content "$CONTENT"             --target "{\"instanceId\":\"$IID\"}"             --timeout-in-seconds 600             --display-name "github-$REQUEST_ID"             --query 'data.id'             --raw-output)"
 
           echo "Submitted Run Command: $CMD_ID"
           sleep 10
 
           echo "=== CURRENT RUN COMMAND EXECUTIONS ==="
-          oci instance-agent command-execution list             --compartment-id "$OCI_TENANCY_OCID"             --instance-id "$IID"             --all             --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id"}'             --output table || true
+          oci instance-agent command-execution list             --compartment-id "$INSTANCE_COMPARTMENT"             --instance-id "$IID"             --all             --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id"}'             --output table || true
