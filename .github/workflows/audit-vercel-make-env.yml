@@ -1,4 +1,4 @@
-name: 🔎 Audit Vercel Make Env
+name: 🔎 Audit Vercel Messaging Env
 
 on:
   push:
@@ -11,15 +11,15 @@ permissions:
 
 jobs:
   audit:
-    name: Audit Make variable names across Vercel projects
+    name: Audit messaging variable names across Vercel projects
     runs-on: ubuntu-latest
     steps:
       - name: ⚡ Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
-      - name: 🔎 Inspect Make env metadata only
+      - name: 🔎 Inspect messaging env metadata only
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -41,15 +41,19 @@ jobs:
             ['depoimentopro-mvp', 'prj_zy1O6n2A98Jblfl1aZr0BBMHFBqx'],
             ['depoimentopro', 'prj_QVpsPKfuamkwFwpnMJKbUKL2HjCH'],
           ];
-          const wanted = new Set([
-            'MAKE_API_TOKEN',
-            'MAKE_API_BASE_URL',
-            'MAKE_ORGANIZATION_ID',
-            'MAKE_TEAM_ID',
-            'MAKE_APPOINTMENT_WEBHOOK_URL',
-            'MAKE_REMINDER_WEBHOOK_URL',
-            'MAKE_BILLING_WEBHOOK_URL',
-          ]);
+          const patterns = [
+            /WHATSAPP/i,
+            /WABA/i,
+            /META.*(TOKEN|PHONE|APP|BUSINESS)/i,
+            /TWILIO/i,
+            /Z[_-]?API/i,
+            /EVOLUTION/i,
+            /360DIALOG/i,
+            /GUPSHUP/i,
+            /ULTRAMSG/i,
+            /PHONE_NUMBER_ID/i,
+            /BUSINESS_ACCOUNT_ID/i,
+          ];
 
           for (const [name, id] of projects) {
             const url = new URL(`https://api.vercel.com/v10/projects/${id}/env`);
@@ -63,8 +67,8 @@ jobs:
             }
             const data = await response.json();
             const matches = (data.envs || [])
-              .filter((env) => wanted.has(env.key))
+              .filter((env) => patterns.some((pattern) => pattern.test(env.key)))
               .map((env) => ({ key: env.key, type: env.type, target: env.target }));
-            console.log(`${name}: ${matches.length ? JSON.stringify(matches) : 'no Make vars'}`);
+            console.log(`${name}: ${matches.length ? JSON.stringify(matches) : 'no messaging vars'}`);
           }
           NODE
