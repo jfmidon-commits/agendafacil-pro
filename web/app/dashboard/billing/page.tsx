@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { billingPlanName } from "@/lib/billing";
 import { createClient } from "@/lib/supabase/server";
 import BillingActions from "./billing-actions";
 
@@ -30,7 +31,7 @@ export default async function BillingPage({
       .single(),
     supabase
       .from("subscriptions")
-      .select("plan,status,current_period_end,cancel_at_period_end")
+      .select("plan,billing_interval,status,current_period_end,cancel_at_period_end")
       .eq("user_id", user.id)
       .maybeSingle(),
   ]);
@@ -45,7 +46,7 @@ export default async function BillingPage({
     subscription && !["canceled", "incomplete_expired"].includes(subscription.status),
   );
   const planLabel = subscription
-    ? `${subscription.plan === "pro-annual" ? "Pro anual" : "Pro mensal"} · ${statusLabels[subscription.status] || subscription.status}`
+    ? `${billingPlanName(subscription.plan, subscription.billing_interval)} · ${statusLabels[subscription.status] || subscription.status}`
     : trialActive
       ? "Trial Pro"
       : "Free";

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { lookupKeyForPlan, planFromPrice } from "./stripe";
+import { billingIntervalFromPrice, lookupKeyForPlan, planFromPrice } from "./stripe";
 
 const originalMonthly = process.env.STRIPE_PRICE_PRO_MONTHLY;
 const originalAnnual = process.env.STRIPE_PRICE_PRO_ANNUAL;
@@ -27,6 +27,16 @@ describe("Stripe catalog mapping", () => {
     process.env.STRIPE_PRICE_PRO_ANNUAL = "price_legacy_annual";
     expect(planFromPrice({ id: "price_legacy_monthly", lookup_key: null })).toBe("pro");
     expect(planFromPrice({ id: "price_legacy_annual", lookup_key: null })).toBe("pro");
+  });
+
+  it("extracts monthly and annual billing intervals", () => {
+    expect(billingIntervalFromPrice({ recurring: { interval: "month" } } as never)).toBe("month");
+    expect(billingIntervalFromPrice({ recurring: { interval: "year" } } as never)).toBe("year");
+  });
+
+  it("treats unsupported or non-recurring prices as unknown cadence", () => {
+    expect(billingIntervalFromPrice({ recurring: null } as never)).toBeNull();
+    expect(billingIntervalFromPrice({ recurring: { interval: "week" } } as never)).toBeNull();
   });
 
   it("rejects an unknown price", () => {
