@@ -2,7 +2,7 @@
 
 ## 📋 Status verificado
 
-Última validação: **30/08/2026**.
+Última validação: **31/08/2026**.
 
 | Serviço | Status | Referência |
 |---------|--------|------------|
@@ -13,9 +13,12 @@
 | Cancelamento pelo proprietário | ✅ E2E 3/3 | `owner-cancellation.e2e.test.ts` |
 | Fluxo profissional UI | ✅ Playwright verde | `e2e/professional-flow.spec.ts` |
 | Stripe TEST | ✅ E2E de ponta a ponta verde | `e2e/billing-flow.spec.ts` |
-| Make / WhatsApp | 🟡 Código pronto, credencial/webhook externo pendente | readiness automático |
+| AgendaFácil → Make | ✅ Entrega real de criação + lembrete | `make-integration.e2e.test.ts` |
+| WhatsApp real | 🟡 Provedor ainda não configurado no Make | gate de entrega verificada |
 
-O ambiente está classificado como **beta técnica validada do núcleo de agendamento e cobrança**. Booking público, concorrência, cancelamentos, bloqueios de agenda, limite do plano Free, onboarding autenticado, jornada completa do profissional e ciclo Stripe TEST são exercitados automaticamente no staging.
+O ambiente está classificado como **beta técnica validada do núcleo de agendamento e cobrança**. Booking público, concorrência, cancelamentos, bloqueios de agenda, limite do plano Free, onboarding autenticado, jornada completa do profissional, ciclo Stripe TEST e transporte AgendaFácil → Make são exercitados automaticamente no staging.
+
+A liberação do beta com profissionais-alvo continua condicionada à **comprovação de uma entrega real de WhatsApp**.
 
 ## 🗄️ Banco de Dados
 
@@ -32,6 +35,7 @@ schedule_blocks       → bloqueios de agenda
 appointments          → agendamentos
 subscriptions         → estado de assinatura/plano + periodicidade
 integration_events    → outbox/retry de integrações
+integration_settings  → configuração interna server-only de integrações
 stripe_events         → idempotência e estado dos webhooks Stripe
 ```
 
@@ -43,7 +47,7 @@ O banco usa RLS e funções/RPCs para operações privilegiadas e transacionais.
 - `appointments(service_id)` possui índice de cobertura para a FK;
 - índice duplicado de `integration_events(appointment_id,event_type)` foi removido, preservando a restrição única original;
 - advisors de performance do Supabase ficaram sem WARNs após a migration `20260831012625_optimize_rls_and_indexes.sql`;
-- tabelas internas `integration_events` e `stripe_events` permanecem sem policies de cliente por desenho: RLS bloqueia acesso direto e operações internas usam service role.
+- tabelas internas `integration_events`, `integration_settings` e `stripe_events` permanecem sem policies de cliente por desenho: RLS bloqueia acesso direto e operações internas usam service role.
 
 Permanece como recomendação de segurança da plataforma ativar **Leaked Password Protection** no Supabase Auth quando o plano do projeto suportar esse recurso.
 
@@ -76,26 +80,29 @@ Overrides opcionais:
 - `STRIPE_PRICE_PRO_ANNUAL`;
 - `STRIPE_PRICE_STUDIO_MONTHLY` — reservado para fase futura.
 
-### Make / WhatsApp — única integração externa pendente
+### Make / WhatsApp
 
-Para fechar o readiness externo ainda são necessários:
+O webhook de appointment do Make está configurado no staging por armazenamento interno server-only no Supabase e já foi validado por E2E real. O mesmo webhook funciona como fallback de lembrete.
+
+Overrides suportados por variável de ambiente:
 
 - `MAKE_APPOINTMENT_WEBHOOK_URL`;
-- `MAKE_REMINDER_WEBHOOK_URL` ou fallback efetivo pelo webhook de appointment.
+- `MAKE_REMINDER_WEBHOOK_URL` — opcional, dedicado a lembretes;
+- `MAKE_BILLING_WEBHOOK_URL` — opcional.
 
-Opcional:
+O AgendaFácil envia ao Make um bloco `whatsapp` com telefone normalizado em E.164 e mensagem pronta para cliente/profissional. A credencial do provedor WhatsApp permanece exclusivamente no Make.
 
-- `MAKE_BILLING_WEBHOOK_URL`.
+O ponto externo ainda pendente é conectar um provedor real (Meta Cloud API, Z-API, Evolution API ou equivalente) ao cenário e provar uma mensagem entregue. Somente depois dessa prova deve existir o marcador interno `whatsapp_delivery_verified_at`.
 
-O endpoint protegido `/api/health/integrations` retorna somente presença/ausência das configurações; nenhum segredo é exibido.
+O endpoint protegido `/api/health/integrations` retorna somente estados booleanos; nenhum webhook, token ou outro segredo é exibido.
 
 ## 🧪 Validação automática
 
 Após um deploy de staging bem-sucedido, os workflows executam:
 
-1. **Staging E2E — API/Domain** — 16 cenários do núcleo (10 público + 3 onboarding/auth + 3 cancelamento proprietário).
+1. **Staging E2E — API/Domain** — núcleo de booking/auth/cancelamento + entrega real ao webhook do Make para criação e lembrete.
 2. **Staging E2E — Professional UI + Billing** — fluxo completo do profissional em mobile e ciclo Stripe TEST.
-3. **Integration Readiness** — verifica Make e Stripe no runtime. Atualmente Stripe está verde e Make permanece pendente.
+3. **Integration Readiness** — exige app, Make, **entrega WhatsApp previamente comprovada** e Stripe no runtime. Enquanto o provedor de WhatsApp não estiver configurado e validado, este gate deve permanecer vermelho de propósito.
 
 ### Cenários E2E atualmente verdes
 
@@ -118,6 +125,14 @@ Após um deploy de staging bem-sucedido, os workflows executam:
 - cancelamento pelo dono com autoria e evento de integração;
 - proteção contra cancelamento por outro usuário;
 - rejeição de duplo cancelamento.
+
+**Make:**
+- reserva pelo endpoint real cria `appointment.created`;
+- runtime de staging entrega o evento ao webhook real do Make;
+- lembrete `appointment.reminder_due` é entregue ao Make;
+- payload inclui telefones E.164 e mensagens WhatsApp prontas;
+- tentativas, `delivered_at` e `last_error` são verificados;
+- dados sintéticos são removidos ao final.
 
 **Profissional UI:**
 - login com credenciais reais;
@@ -174,8 +189,9 @@ Requer credenciais de staging configuradas em `.env.local`.
 
 ## 📝 Próximas prioridades
 
-1. [ ] Configurar Make/WhatsApp no staging e comprovar entrega real de confirmação e lembrete.
-2. [x] Configurar Stripe TEST com webhook e lookup keys Pro mensal/anual.
-3. [x] Validar ciclo de cobrança completo: checkout → webhook → assinatura → troca mensal/anual → portal → cancelamento.
-4. [x] Otimizar RLS e índices do Supabase sem regressão funcional.
-5. [ ] Fazer beta com profissionais-alvo depois que Make/WhatsApp estiver verde.
+1. [ ] Conectar provedor WhatsApp ao cenário Make e comprovar entrega real de confirmação e lembrete.
+2. [ ] Registrar `whatsapp_delivery_verified_at` somente após a prova real e deixar Integration Readiness verde.
+3. [x] Configurar Stripe TEST com webhook e lookup keys Pro mensal/anual.
+4. [x] Validar ciclo de cobrança completo: checkout → webhook → assinatura → troca mensal/anual → portal → cancelamento.
+5. [x] Otimizar RLS e índices do Supabase sem regressão funcional.
+6. [ ] Fazer beta com profissionais-alvo depois que WhatsApp estiver verde.
