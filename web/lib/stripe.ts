@@ -2,6 +2,7 @@ import Stripe from "stripe";
 
 export type CheckoutPlan = "pro" | "pro-annual";
 export type PaidPlan = "pro" | "studio";
+export type BillingInterval = "month" | "year" | null;
 
 const LOOKUP_KEYS: Record<CheckoutPlan, string> = {
   pro: "agendafacil_pro_monthly",
@@ -16,6 +17,11 @@ export function getStripe() {
 
 export function lookupKeyForPlan(plan: CheckoutPlan) {
   return LOOKUP_KEYS[plan];
+}
+
+export function billingIntervalFromPrice(price: Pick<Stripe.Price, "recurring">): BillingInterval {
+  const interval = price.recurring?.interval;
+  return interval === "month" || interval === "year" ? interval : null;
 }
 
 function envPriceForPlan(plan: CheckoutPlan) {
