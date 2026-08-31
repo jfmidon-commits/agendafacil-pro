@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { billingIntervalFromPrice, lookupKeyForPlan, planFromPrice } from "./stripe";
+import {
+  billingIntervalFromPrice,
+  billingPeriodFromSubscription,
+  lookupKeyForPlan,
+  planFromPrice,
+} from "./stripe";
 
 const originalMonthly = process.env.STRIPE_PRICE_PRO_MONTHLY;
 const originalAnnual = process.env.STRIPE_PRICE_PRO_ANNUAL;
@@ -37,6 +42,26 @@ describe("Stripe catalog mapping", () => {
   it("treats unsupported or non-recurring prices as unknown cadence", () => {
     expect(billingIntervalFromPrice({ recurring: null } as never)).toBeNull();
     expect(billingIntervalFromPrice({ recurring: { interval: "week" } } as never)).toBeNull();
+  });
+
+  it("reads billing periods from subscription items on current Stripe APIs", () => {
+    expect(
+      billingPeriodFromSubscription({
+        items: {
+          data: [{ current_period_start: 100, current_period_end: 200 }],
+        },
+      } as never),
+    ).toEqual({ start: 100, end: 200 });
+  });
+
+  it("keeps compatibility with legacy subscription-level billing periods", () => {
+    expect(
+      billingPeriodFromSubscription({
+        items: { data: [] },
+        current_period_start: 300,
+        current_period_end: 400,
+      } as never),
+    ).toEqual({ start: 300, end: 400 });
   });
 
   it("rejects an unknown price", () => {
