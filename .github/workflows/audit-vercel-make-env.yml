@@ -1,0 +1,70 @@
+name: 🔎 Audit Vercel Make Env
+
+on:
+  push:
+    branches: [ops/audit-vercel-make-env]
+    paths:
+      - '.github/workflows/audit-vercel-make-env.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit Make variable names across Vercel projects
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⚡ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 🔎 Inspect Make env metadata only
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+        run: |
+          node <<'NODE'
+          const token = (process.env.VERCEL_TOKEN || '').trim();
+          const teamId = (process.env.VERCEL_ORG_ID || '').trim();
+          if (!token || !teamId) throw new Error('Vercel credentials unavailable.');
+
+          const projects = [
+            ['agendafacil-staging', 'prj_N02K65dTZqq2i2zVC8qCay6I4guQ'],
+            ['relatoriofacil-app', 'prj_n5qpzmbpcVbgSVnmgCNeK19Zxavl'],
+            ['relatoriofacil-web', 'prj_gegPUaOCPD69BwhLMd6UnLK7H59B'],
+            ['relatoriofacil', 'prj_9MzpzbyrxzlQu54SDf3ypYNPV36D'],
+            ['depoimentopro-app', 'prj_dKmK4QAiTwfeEX4OhAWG67s4FhNP'],
+            ['vision-web', 'prj_ZKxP47t8P0g9ixvLIgG3Hz4qMen5'],
+            ['vision-ai-casting', 'prj_hWOvS0v9I7dogyBIP4A9iORtNLhR'],
+            ['backend', 'prj_0chSfnpYAvOWggsXUOzEbPfdVWWJ'],
+            ['depoimentopro-mvp', 'prj_zy1O6n2A98Jblfl1aZr0BBMHFBqx'],
+            ['depoimentopro', 'prj_QVpsPKfuamkwFwpnMJKbUKL2HjCH'],
+          ];
+          const wanted = new Set([
+            'MAKE_API_TOKEN',
+            'MAKE_API_BASE_URL',
+            'MAKE_ORGANIZATION_ID',
+            'MAKE_TEAM_ID',
+            'MAKE_APPOINTMENT_WEBHOOK_URL',
+            'MAKE_REMINDER_WEBHOOK_URL',
+            'MAKE_BILLING_WEBHOOK_URL',
+          ]);
+
+          for (const [name, id] of projects) {
+            const url = new URL(`https://api.vercel.com/v10/projects/${id}/env`);
+            url.searchParams.set('teamId', teamId);
+            const response = await fetch(url, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!response.ok) {
+              console.log(`${name}: HTTP ${response.status}`);
+              continue;
+            }
+            const data = await response.json();
+            const matches = (data.envs || [])
+              .filter((env) => wanted.has(env.key))
+              .map((env) => ({ key: env.key, type: env.type, target: env.target }));
+            console.log(`${name}: ${matches.length ? JSON.stringify(matches) : 'no Make vars'}`);
+          }
+          NODE
