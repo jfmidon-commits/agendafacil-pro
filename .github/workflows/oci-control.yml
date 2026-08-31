@@ -20,7 +20,6 @@ jobs:
     timeout-minutes: 15
     env:
       OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
-      SUPPRESS_LABEL_WARNING: "True"
       OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
       OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
       OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
@@ -40,14 +39,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          missing=0
           for name in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_PRIVATE_KEY OCI_REGION; do
             if [ -z "${!name:-}" ]; then
-              echo "::error::$name is not configured as a GitHub Actions secret"
-              missing=1
+              echo "::error::$name is not configured"
+              exit 1
             fi
           done
-          [ "$missing" -eq 0 ]
 
       - name: Install OCI CLI
         shell: bash
@@ -55,7 +52,7 @@ jobs:
           python -m pip install --disable-pip-version-check --quiet oci-cli
           oci --version
 
-      - name: Configure OCI API authentication
+      - name: Configure OCI authentication
         shell: bash
         run: |
           set -euo pipefail
@@ -76,14 +73,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Region: $OCI_REGION"
-          oci iam region-subscription list --query 'data[].{"region":"region-name","status":status}' --output table
+          oci iam region-subscription list --output table >/dev/null
+          echo "OCI authentication OK"
 
       - name: Execute OCI control request
         shell: bash
         run: |
           set -euo pipefail
-
           REQUEST="ops/oci-request.json"
           jq empty "$REQUEST"
 
@@ -91,87 +87,61 @@ jobs:
           OPERATION="$(jq -r '.operation // empty' "$REQUEST")"
           INSTANCE_NAME="$(jq -r '.instance_name // "agendafacil-evolution"' "$REQUEST")"
 
+          case "$OPERATION" in
+            inventory|run_command_status|run_instance_command) ;;
+            *) echo "::error::Unsupported operation: $OPERATION"; exit 2 ;;
+          esac
+
           echo "Request: $REQUEST_ID"
           echo "Operation: $OPERATION"
           echo "Instance: $INSTANCE_NAME"
 
-          case "$OPERATION" in
-            inventory|run_command_status|run_instance_command|diagnostics|restart_agent) ;;
-            *)
-              echo "::error::Unsupported operation: $OPERATION"
-              exit 2
-              ;;
-          esac
-
-          # Find instance using structured search
-          echo "Searching for instance across all compartments..."
-          SEARCH_JSON="$(oci search resource structured-search             --query-text "query instance resources where displayName = '$INSTANCE_NAME'"             --query 'data.items[0]'             --raw-output 2>/dev/null || true)"
+          SEARCH_JSON="$(oci search resource structured-search \
+            --query-text "query instance resources where displayName = '$INSTANCE_NAME'" \
+            --query 'data.items[0]' \
+            --raw-output)"
 
           if [ -z "$SEARCH_JSON" ] || [ "$SEARCH_JSON" = "null" ]; then
-            echo "::error::Instance '$INSTANCE_NAME' was not found in any compartment"
+            echo "::error::Instance '$INSTANCE_NAME' not found"
             exit 3
           fi
 
-          IID="$(echo "$SEARCH_JSON" | jq -r '.identifier')"
-          INSTANCE_COMPARTMENT="$(echo "$SEARCH_JSON" | jq -r '."compartment-id"')"
-          INSTANCE_STATE="$(echo "$SEARCH_JSON" | jq -r '."lifecycle-state"')"
+          IID="$(printf '%s' "$SEARCH_JSON" | jq -r '.identifier')"
+          INSTANCE_COMPARTMENT="$(printf '%s' "$SEARCH_JSON" | jq -r '."compartment-id"')"
 
           echo "Instance OCID: $IID"
-          echo "Instance Compartment: $INSTANCE_COMPARTMENT"
-          echo "Instance State: $INSTANCE_STATE"
+          echo "Compartment OCID: $INSTANCE_COMPARTMENT"
 
           if [ "$OPERATION" = "inventory" ]; then
             echo "=== INSTANCE ==="
-            oci compute instance get               --instance-id "$IID"               --query 'data.{name:"display-name",state:"lifecycle-state",shape:shape,created:"time-created",ad:"availability-domain"}'               --output table
+            oci compute instance get \
+              --instance-id "$IID" \
+              --query 'data.{name:"display-name",state:"lifecycle-state",shape:shape,created:"time-created"}' \
+              --output table
 
             echo "=== NETWORK ==="
-            oci compute instance list-vnics               --instance-id "$IID"               --query 'data[].{name:"display-name",private_ip:"private-ip",public_ip:"public-ip",subnet_id:"subnet-id"}'               --output table
+            oci compute instance list-vnics \
+              --instance-id "$IID" \
+              --query 'data[].{private_ip:"private-ip",public_ip:"public-ip"}' \
+              --output table
 
-            echo "=== INSTANCE AGENT PLUGINS ==="
-            oci instance-agent plugin list               --compartment-id "$INSTANCE_COMPARTMENT"               --instanceagent-id "$IID"               --all               --query 'data[].{plugin:name,status:status}'               --output table || echo "(Instance Agent plugin list may require instance-level permissions)"
-
-            echo "=== RUN COMMAND EXECUTIONS ==="
-            oci instance-agent command-execution list               --compartment-id "$INSTANCE_COMPARTMENT"               --instance-id "$IID"               --all               --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id"}'               --output table || echo "(No run command executions found or permission issue)"
+            echo "=== RUN COMMAND PLUGIN ==="
+            oci instance-agent plugin list \
+              --compartment-id "$INSTANCE_COMPARTMENT" \
+              --instanceagent-id "$IID" \
+              --all \
+              --query 'data[?name==`Compute Instance Run Command`].{plugin:name,status:status}' \
+              --output table
             exit 0
           fi
 
           if [ "$OPERATION" = "run_command_status" ]; then
-            echo "=== RUN COMMAND PLUGIN ==="
-            oci instance-agent plugin list               --compartment-id "$INSTANCE_COMPARTMENT"               --instanceagent-id "$IID"               --all               --query 'data[?name==`Compute Instance Run Command`].{plugin:name,status:status}'               --output table || true
-
-            echo "=== RUN COMMAND EXECUTIONS ==="
-            oci instance-agent command-execution list               --compartment-id "$INSTANCE_COMPARTMENT"               --instance-id "$IID"               --all               --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id",created:"time-created"}'               --output table || true
-            exit 0
-          fi
-
-          if [ "$OPERATION" = "diagnostics" ]; then
-            echo "=== DYNAMIC GROUPS ==="
-            oci iam dynamic-group list --all --query 'data[].{name:name,id:id}' --output table || true
-
-            echo ""
-            echo "=== POLICIES ==="
-            oci iam policy list --compartment-id "$OCI_TENANCY_OCID" --all --query 'data[].{name:name,state:"lifecycle-state"}' --output table || true
-
-            echo ""
-            echo "=== INSTANCE AGENT PLUGINS (detailed) ==="
-            oci instance-agent plugin list               --compartment-id "$INSTANCE_COMPARTMENT"               --instanceagent-id "$IID"               --all               --query 'data[].{plugin:name,status:status,version:version}'               --output table || true
-            exit 0
-          fi
-
-          if [ "$OPERATION" = "restart_agent" ]; then
-            echo "Attempting to restart instance agent via run command..."
-            RESTART_SCRIPT='#!/bin/bash
-systemctl restart oracle-cloud-agent || true
-systemctl status oracle-cloud-agent || true
-systemctl restart oci-instance-agent || true
-systemctl status oci-instance-agent || true
-echo "Agent restart attempted"'
-
-            CONTENT="$(python3 -c "import json; print(json.dumps({'source':{'sourceType':'TEXT','text':'$RESTART_SCRIPT'},'output':{'outputType':'TEXT'}}))")"
-
-            CMD_ID="$(oci instance-agent command create               --compartment-id "$INSTANCE_COMPARTMENT"               --content "$CONTENT"               --target "{\"instanceId\":\"$IID\"}"               --timeout-in-seconds 300               --display-name "github-restart-agent-$REQUEST_ID"               --query 'data.id'               --raw-output)"
-
-            echo "Submitted agent restart: $CMD_ID"
+            oci instance-agent command-execution list \
+              --compartment-id "$INSTANCE_COMPARTMENT" \
+              --instance-id "$IID" \
+              --all \
+              --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id",created:"time-created"}' \
+              --output table
             exit 0
           fi
 
@@ -183,23 +153,33 @@ echo "Agent restart attempted"'
 
           printf '%s' "$SCRIPT_B64" | base64 --decode > /tmp/oci-remote.sh
           chmod 700 /tmp/oci-remote.sh
-          echo "Remote script bytes: $(wc -c < /tmp/oci-remote.sh)"
 
-          CONTENT="$(python - <<'PY'
+          CONTENT="$(python3 - <<'PY'
           import json
           from pathlib import Path
           script = Path('/tmp/oci-remote.sh').read_text()
           print(json.dumps({
               'source': {'sourceType': 'TEXT', 'text': script},
-              'output': {'outputType': 'TEXT'},
+              'output': {'outputType': 'TEXT'}
           }))
           PY
           )"
 
-          CMD_ID="$(oci instance-agent command create             --compartment-id "$INSTANCE_COMPARTMENT"             --content "$CONTENT"             --target "{\"instanceId\":\"$IID\"}"             --timeout-in-seconds 600             --display-name "github-$REQUEST_ID"             --query 'data.id'             --raw-output)"
+          CMD_ID="$(oci instance-agent command create \
+            --compartment-id "$INSTANCE_COMPARTMENT" \
+            --content "$CONTENT" \
+            --target "{\"instanceId\":\"$IID\"}" \
+            --timeout-in-seconds 600 \
+            --display-name "github-$REQUEST_ID" \
+            --query 'data.id' \
+            --raw-output)"
 
           echo "Submitted Run Command: $CMD_ID"
-          sleep 10
+          sleep 15
 
-          echo "=== CURRENT RUN COMMAND EXECUTIONS ==="
-          oci instance-agent command-execution list             --compartment-id "$INSTANCE_COMPARTMENT"             --instance-id "$IID"             --all             --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id"}'             --output table || true
+          oci instance-agent command-execution list \
+            --compartment-id "$INSTANCE_COMPARTMENT" \
+            --instance-id "$IID" \
+            --all \
+            --query "data[?\"command-id\"=='$CMD_ID'].{name:\"display-name\",status:\"lifecycle-state\",delivery:\"delivery-state\",command_id:\"command-id\"}" \
+            --output table
