@@ -1,5 +1,5 @@
-import { createCancelToken } from "@/lib/cancel-token";
-import { createServiceClient } from "@/lib/supabase/service";
+import { createCancelToken } from "../cancel-token";
+import { createServiceClient } from "../supabase/service";
 
 function endpointFor(eventType: string) {
   if (eventType === "appointment.reminder_due") {
