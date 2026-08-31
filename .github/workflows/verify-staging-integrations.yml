@@ -1,0 +1,188 @@
+name: 🧭 Verify Staging Integrations
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/verify-staging-integrations.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify Vercel env metadata and runtime readiness
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⚡ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 🔎 Inspect Vercel integration env metadata
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          STRIPE_SECRET_KEY_INPUT: ${{ secrets.STRIPE_SECRET_KEY }}
+          MAKE_API_TOKEN_INPUT: ${{ secrets.MAKE_API_TOKEN }}
+          MAKE_APPOINTMENT_WEBHOOK_URL_INPUT: ${{ secrets.MAKE_APPOINTMENT_WEBHOOK_URL }}
+          MAKE_REMINDER_WEBHOOK_URL_INPUT: ${{ secrets.MAKE_REMINDER_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const clean = (value) => (value || '').replace(/[\r\n]/g, '').trim();
+          const projectId = clean(process.env.VERCEL_PROJECT_ID);
+          const teamId = clean(process.env.VERCEL_ORG_ID);
+          const token = clean(process.env.VERCEL_TOKEN);
+
+          if (!projectId || !teamId || !token) {
+            throw new Error('Vercel credentials are unavailable.');
+          }
+
+          const expected = {
+            stripe: Boolean(clean(process.env.STRIPE_SECRET_KEY_INPUT)),
+            make: Boolean(
+              clean(process.env.MAKE_API_TOKEN_INPUT) ||
+              clean(process.env.MAKE_APPOINTMENT_WEBHOOK_URL_INPUT) ||
+              clean(process.env.MAKE_REMINDER_WEBHOOK_URL_INPUT)
+            ),
+          };
+
+          const endpoint = new URL(`https://api.vercel.com/v10/projects/${encodeURIComponent(projectId)}/env`);
+          endpoint.searchParams.set('teamId', teamId);
+
+          const response = await fetch(endpoint, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!response.ok) {
+            throw new Error(`Vercel env metadata request failed with HTTP ${response.status}.`);
+          }
+
+          const data = await response.json();
+          const envs = Array.isArray(data?.envs) ? data.envs : [];
+          const required = [
+            'STRIPE_SECRET_KEY',
+            'STRIPE_WEBHOOK_SECRET',
+            'MAKE_APPOINTMENT_WEBHOOK_URL',
+            'MAKE_REMINDER_WEBHOOK_URL',
+            'MAKE_BILLING_WEBHOOK_URL',
+          ];
+
+          const metadata = required.map((key) => {
+            const matches = envs.filter((item) => item?.key === key);
+            const production = matches.find((item) => Array.isArray(item?.target) && item.target.includes('production'));
+            return {
+              key,
+              present: Boolean(production),
+              type: production?.type || null,
+              target: Array.isArray(production?.target) ? production.target : [],
+            };
+          });
+
+          const byKey = Object.fromEntries(metadata.map((item) => [item.key, item.present]));
+          const summary = {
+            expected,
+            vercel: {
+              stripeSecret: Boolean(byKey.STRIPE_SECRET_KEY),
+              stripeWebhook: Boolean(byKey.STRIPE_WEBHOOK_SECRET),
+              makeAppointment: Boolean(byKey.MAKE_APPOINTMENT_WEBHOOK_URL),
+              makeReminder: Boolean(byKey.MAKE_REMINDER_WEBHOOK_URL),
+              makeBilling: Boolean(byKey.MAKE_BILLING_WEBHOOK_URL),
+            },
+          };
+
+          console.log('Vercel integration env metadata (values intentionally omitted):');
+          console.log(JSON.stringify(metadata, null, 2));
+          fs.writeFileSync('/tmp/vercel-integration-status.json', JSON.stringify(summary));
+
+          if (expected.stripe && !summary.vercel.stripeSecret) {
+            throw new Error('Stripe is stored in GitHub secrets but STRIPE_SECRET_KEY is absent from Vercel production env metadata.');
+          }
+          NODE
+
+      - name: 🩺 Probe staging runtime readiness
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          STRIPE_SECRET_KEY_INPUT: ${{ secrets.STRIPE_SECRET_KEY }}
+          MAKE_API_TOKEN_INPUT: ${{ secrets.MAKE_API_TOKEN }}
+          MAKE_APPOINTMENT_WEBHOOK_URL_INPUT: ${{ secrets.MAKE_APPOINTMENT_WEBHOOK_URL }}
+          MAKE_REMINDER_WEBHOOK_URL_INPUT: ${{ secrets.MAKE_REMINDER_WEBHOOK_URL }}
+          STAGING_URL: https://agendafacil-staging-pearl.vercel.app
+        run: |
+          set -euo pipefail
+          clean_cron_secret="$(printf '%s' "$CRON_SECRET" | tr -d '\r\n')"
+          if [ -z "$clean_cron_secret" ]; then
+            echo 'CRON_SECRET unavailable; runtime readiness cannot be verified.'
+            exit 1
+          fi
+
+          http_status=$(curl --silent --show-error --output /tmp/readiness.json --write-out "%{http_code}" \
+            -H "Authorization: Bearer ${clean_cron_secret}" \
+            "${STAGING_URL}/api/health/integrations" || true)
+          if [ "$http_status" != "200" ]; then
+            echo "Runtime readiness returned HTTP ${http_status}."
+            exit 1
+          fi
+
+          node <<'NODE'
+          const fs = require('node:fs');
+          const clean = (value) => (value || '').replace(/[\r\n]/g, '').trim();
+          const readiness = JSON.parse(fs.readFileSync('/tmp/readiness.json', 'utf8'));
+          const vercel = JSON.parse(fs.readFileSync('/tmp/vercel-integration-status.json', 'utf8'));
+
+          const expectedStripe = Boolean(clean(process.env.STRIPE_SECRET_KEY_INPUT));
+          const expectedMake = Boolean(
+            clean(process.env.MAKE_API_TOKEN_INPUT) ||
+            clean(process.env.MAKE_APPOINTMENT_WEBHOOK_URL_INPUT) ||
+            clean(process.env.MAKE_REMINDER_WEBHOOK_URL_INPUT)
+          );
+
+          const runtime = {
+            appUrl: Boolean(readiness.appUrl),
+            stripe: {
+              secret: Boolean(readiness.stripe?.secret),
+              webhook: Boolean(readiness.stripe?.webhook),
+              proMonthly: Boolean(readiness.stripe?.proMonthly),
+              proAnnual: Boolean(readiness.stripe?.proAnnual),
+            },
+            make: {
+              appointment: Boolean(readiness.make?.appointment),
+              reminderEffective: Boolean(readiness.make?.reminderEffective),
+              billing: Boolean(readiness.make?.billing),
+            },
+          };
+
+          console.log('Runtime readiness (booleans only):');
+          console.log(JSON.stringify(runtime, null, 2));
+
+          const failures = [];
+          if (expectedStripe) {
+            if (!runtime.stripe.secret) failures.push('Stripe secret is absent from runtime');
+            if (!runtime.stripe.webhook) failures.push('Stripe webhook secret is absent from runtime');
+            if (!runtime.stripe.proMonthly) failures.push('Stripe Pro monthly lookup is not ready');
+            if (!runtime.stripe.proAnnual) failures.push('Stripe Pro annual lookup is not ready');
+          }
+
+          if (expectedMake) {
+            if (!runtime.make.appointment) failures.push('Make appointment webhook is absent from runtime');
+            if (!runtime.make.reminderEffective) failures.push('Make reminder path is absent from runtime');
+          }
+
+          if (expectedStripe && vercel.vercel.stripeSecret && !runtime.stripe.secret) {
+            failures.push('Vercel metadata contains STRIPE_SECRET_KEY but the deployed runtime does not see it');
+          }
+
+          if (failures.length) {
+            console.error('Integration verification failed:');
+            for (const failure of failures) console.error(`- ${failure}`);
+            process.exit(1);
+          }
+
+          if (!expectedMake) {
+            console.log('Make remains intentionally unconfigured because no Make secret/token is stored in GitHub.');
+          }
+          NODE
