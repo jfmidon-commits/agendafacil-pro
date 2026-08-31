@@ -1,0 +1,162 @@
+name: OCI Run Command IAM Bootstrap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ops/oci-iam-request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oci-iam-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate OCI secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_PRIVATE_KEY OCI_REGION; do
+            [ -n "${!name:-}" ] || { echo "::error::$name is missing"; exit 1; }
+          done
+
+      - name: Install OCI CLI
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check --quiet oci-cli
+          oci --version
+
+      - name: Configure OCI API authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+
+      - name: Configure Dynamic Group and Policy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REQUEST="ops/oci-iam-request.json"
+          jq empty "$REQUEST"
+          INSTANCE_NAME="$(jq -r '.instance_name // "agendafacil-evolution"' "$REQUEST")"
+          DG_NAME="$(jq -r '.dynamic_group_name // "AgendaFacilRunCommand"' "$REQUEST")"
+          POLICY_NAME="$(jq -r '.policy_name // "AgendaFacilRunCommandPolicy"' "$REQUEST")"
+
+          echo "Locating instance: $INSTANCE_NAME"
+          SEARCH_JSON="$(oci search resource structured-search \
+            --query-text "query instance resources where displayName = '$INSTANCE_NAME'" \
+            --query 'data.items[0]' \
+            --raw-output)"
+
+          [ -n "$SEARCH_JSON" ] && [ "$SEARCH_JSON" != "null" ] || { echo "::error::Instance not found"; exit 2; }
+
+          IID="$(echo "$SEARCH_JSON" | jq -r '.identifier')"
+          INSTANCE_COMPARTMENT="$(echo "$SEARCH_JSON" | jq -r '."compartment-id"')"
+
+          echo "Instance OCID: $IID"
+          echo "Instance compartment: $INSTANCE_COMPARTMENT"
+
+          DG_ID="$(oci iam dynamic-group list --all \
+            --query "data[?name=='$DG_NAME'] | [0].id" \
+            --raw-output)"
+
+          if [ -z "$DG_ID" ] || [ "$DG_ID" = "None" ] || [ "$DG_ID" = "null" ]; then
+            echo "Creating dynamic group: $DG_NAME"
+            DG_ID="$(oci iam dynamic-group create \
+              --compartment-id "$OCI_TENANCY_OCID" \
+              --name "$DG_NAME" \
+              --description "AgendaFacil VM principal for OCI Run Command" \
+              --matching-rule "instance.id = '$IID'" \
+              --query 'data.id' \
+              --raw-output)"
+          else
+            echo "Dynamic group already exists: $DG_ID"
+            CURRENT_RULE="$(oci iam dynamic-group get --dynamic-group-id "$DG_ID" --query 'data."matching-rule"' --raw-output)"
+            if [ "$CURRENT_RULE" != "instance.id = '$IID'" ]; then
+              echo "Updating dynamic group matching rule to target the current AgendaFacil instance"
+              oci iam dynamic-group update \
+                --dynamic-group-id "$DG_ID" \
+                --matching-rule "instance.id = '$IID'" \
+                --force >/dev/null
+            fi
+          fi
+
+          echo "Waiting for dynamic group to become ACTIVE..."
+          for i in $(seq 1 12); do
+            DG_STATE="$(oci iam dynamic-group get --dynamic-group-id "$DG_ID" --query 'data."lifecycle-state"' --raw-output)"
+            echo "Dynamic group state: $DG_STATE"
+            [ "$DG_STATE" = "ACTIVE" ] && break
+            sleep 5
+          done
+
+          STATEMENT="Allow dynamic-group id $DG_ID to use instance-agent-command-execution-family in compartment id $INSTANCE_COMPARTMENT where request.instance.id=target.instance.id"
+
+          POLICY_ID="$(oci iam policy list \
+            --compartment-id "$OCI_TENANCY_OCID" \
+            --all \
+            --query "data[?name=='$POLICY_NAME'] | [0].id" \
+            --raw-output)"
+
+          if [ -z "$POLICY_ID" ] || [ "$POLICY_ID" = "None" ] || [ "$POLICY_ID" = "null" ]; then
+            echo "Creating policy: $POLICY_NAME"
+            printf '[%s]\n' "$(jq -Rn --arg s "$STATEMENT" '$s')" > /tmp/statements.json
+            POLICY_ID="$(oci iam policy create \
+              --compartment-id "$OCI_TENANCY_OCID" \
+              --name "$POLICY_NAME" \
+              --description "Allow AgendaFacil VM to poll OCI Run Command executions" \
+              --statements file:///tmp/statements.json \
+              --query 'data.id' \
+              --raw-output)"
+          else
+            echo "Policy already exists: $POLICY_ID"
+            CURRENT_STATEMENTS="$(oci iam policy get --policy-id "$POLICY_ID" --query 'data.statements' --raw-output)"
+            if ! echo "$CURRENT_STATEMENTS" | grep -Fq "$DG_ID"; then
+              echo "Updating existing policy statement"
+              printf '[%s]\n' "$(jq -Rn --arg s "$STATEMENT" '$s')" > /tmp/statements.json
+              oci iam policy update \
+                --policy-id "$POLICY_ID" \
+                --statements file:///tmp/statements.json \
+                --force >/dev/null
+            fi
+          fi
+
+          echo "=== RESULT ==="
+          echo "Dynamic Group ID: $DG_ID"
+          echo "Policy ID: $POLICY_ID"
+          echo "Policy Statement: $STATEMENT"
+          echo "IAM bootstrap completed. Oracle documents that a newly-added instance can take up to 30 minutes to begin polling Run Commands."
