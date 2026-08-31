@@ -1,7 +1,7 @@
 import Stripe from "stripe";
 import { NextResponse } from "next/server";
 import { postBillingEvent } from "@/lib/integrations/make";
-import { planFromPrice, getStripe } from "@/lib/stripe";
+import { billingIntervalFromPrice, planFromPrice, getStripe } from "@/lib/stripe";
 import { createServiceClient } from "@/lib/supabase/service";
 
 function iso(seconds: number | null | undefined) {
@@ -54,6 +54,7 @@ async function syncSubscription(subscription: Stripe.Subscription) {
       stripe_subscription_id: subscription.id,
       stripe_price_id: price.id,
       plan: planFromPrice(price),
+      billing_interval: billingIntervalFromPrice(price),
       status: subscription.status,
       current_period_start: iso(
         (subscription as unknown as { current_period_start?: number }).current_period_start,
