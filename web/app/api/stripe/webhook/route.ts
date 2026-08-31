@@ -1,7 +1,12 @@
 import Stripe from "stripe";
 import { NextResponse } from "next/server";
 import { postBillingEvent } from "@/lib/integrations/make";
-import { billingIntervalFromPrice, planFromPrice, getStripe } from "@/lib/stripe";
+import {
+  billingIntervalFromPrice,
+  billingPeriodFromSubscription,
+  planFromPrice,
+  getStripe,
+} from "@/lib/stripe";
 import { createServiceClient } from "@/lib/supabase/service";
 
 function iso(seconds: number | null | undefined) {
@@ -39,6 +44,7 @@ async function resolveUserId(subscription: Stripe.Subscription) {
 async function syncSubscription(subscription: Stripe.Subscription) {
   const price = subscription.items.data[0]?.price;
   if (!price) throw new Error("stripe_price_missing");
+  const period = billingPeriodFromSubscription(subscription);
   const userId = await resolveUserId(subscription);
   const supabase = createServiceClient();
 
@@ -56,12 +62,8 @@ async function syncSubscription(subscription: Stripe.Subscription) {
       plan: planFromPrice(price),
       billing_interval: billingIntervalFromPrice(price),
       status: subscription.status,
-      current_period_start: iso(
-        (subscription as unknown as { current_period_start?: number }).current_period_start,
-      ),
-      current_period_end: iso(
-        (subscription as unknown as { current_period_end?: number }).current_period_end,
-      ),
+      current_period_start: iso(period.start),
+      current_period_end: iso(period.end),
       cancel_at_period_end: subscription.cancel_at_period_end,
     },
     { onConflict: "user_id" },
