@@ -24,6 +24,19 @@ export function billingIntervalFromPrice(price: Pick<Stripe.Price, "recurring">)
   return interval === "month" || interval === "year" ? interval : null;
 }
 
+export function billingPeriodFromSubscription(subscription: Pick<Stripe.Subscription, "items">) {
+  const item = subscription.items.data[0];
+  const legacy = subscription as unknown as {
+    current_period_start?: number | null;
+    current_period_end?: number | null;
+  };
+
+  return {
+    start: item?.current_period_start ?? legacy.current_period_start ?? null,
+    end: item?.current_period_end ?? legacy.current_period_end ?? null,
+  };
+}
+
 function envPriceForPlan(plan: CheckoutPlan) {
   return plan === "pro"
     ? process.env.STRIPE_PRICE_PRO_MONTHLY
