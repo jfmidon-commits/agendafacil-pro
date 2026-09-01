@@ -17,7 +17,7 @@ concurrency:
 jobs:
   control:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
       SUPPRESS_LABEL_WARNING: "True"
@@ -47,10 +47,10 @@ jobs:
             fi
           done
 
-      - name: Install OCI CLI
+      - name: Install OCI CLI and request validator
         shell: bash
         run: |
-          python -m pip install --disable-pip-version-check --quiet oci-cli
+          python -m pip install --disable-pip-version-check --quiet oci-cli jsonschema
           oci --version
 
       - name: Configure OCI authentication
@@ -77,25 +77,62 @@ jobs:
           oci iam region-subscription list --output table >/dev/null
           echo "OCI authentication OK"
 
+      - name: Validate ops/oci-request.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft7Validator
+
+          request_path = Path("ops/oci-request.json")
+          schema_path = Path("ops/oci-request.schema.json")
+
+          if not request_path.exists():
+              raise SystemExit("::error::ops/oci-request.json not found")
+          if not schema_path.exists():
+              raise SystemExit("::error::ops/oci-request.schema.json not found")
+
+          request = json.loads(request_path.read_text())
+          schema = json.loads(schema_path.read_text())
+          errors = sorted(Draft7Validator(schema).iter_errors(request), key=lambda err: list(err.path))
+          if errors:
+              for error in errors:
+                  location = ".".join(str(part) for part in error.path) or "<root>"
+                  print(f"::error::oci-request validation failed at {location}: {error.message}")
+              raise SystemExit(1)
+          print("OCI request schema validation passed")
+          PY
+
       - name: Execute OCI control request
         shell: bash
         run: |
           set -euo pipefail
           REQUEST="ops/oci-request.json"
-          jq empty "$REQUEST"
 
           REQUEST_ID="$(jq -r '.request_id // "unspecified"' "$REQUEST")"
           OPERATION="$(jq -r '.operation // empty' "$REQUEST")"
           INSTANCE_NAME="$(jq -r '.instance_name // "agendafacil-evolution"' "$REQUEST")"
+          STACK_NAME="$(jq -r '.stack_name // "agendafacil-evolution"' "$REQUEST")"
 
           case "$OPERATION" in
-            inventory|run_command_status|run_instance_command|reboot_instance) ;;
+            inventory|run_command_status|run_instance_command|reboot_instance|stack_status|stack_plan|stack_apply|stack_job_status) ;;
             *) echo "::error::Unsupported operation: $OPERATION"; exit 2 ;;
           esac
 
           echo "Request: $REQUEST_ID"
           echo "Operation: $OPERATION"
           echo "Instance: $INSTANCE_NAME"
+
+          case "$OPERATION" in
+            stack_status|stack_plan|stack_apply|stack_job_status)
+              echo "Stack: $STACK_NAME"
+              export OPERATION STACK_NAME
+              python3 scripts/oci_stack_manager.py
+              exit $?
+              ;;
+          esac
 
           SEARCH_JSON="$(oci search resource structured-search \
             --query-text "query instance resources where displayName = '$INSTANCE_NAME'" \

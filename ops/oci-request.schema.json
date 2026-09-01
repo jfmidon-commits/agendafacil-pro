@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OCI Control Request",
+  "description": "Validates ops/oci-request.json for OCI Control Bridge operations",
+  "type": "object",
+  "required": ["request_id", "operation"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this request"
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "inventory",
+        "run_command_status",
+        "run_instance_command",
+        "reboot_instance",
+        "stack_status",
+        "stack_plan",
+        "stack_apply",
+        "stack_job_status"
+      ]
+    },
+    "instance_name": {
+      "type": "string",
+      "minLength": 1,
+      "default": "agendafacil-evolution"
+    },
+    "stack_name": {
+      "type": "string",
+      "minLength": 1,
+      "default": "agendafacil-evolution"
+    },
+    "script_b64": {
+      "type": "string"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": { "const": "run_instance_command" }
+        },
+        "required": ["operation"]
+      },
+      "then": {
+        "required": ["script_b64"],
+        "properties": {
+          "script_b64": { "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "enum": ["stack_status", "stack_plan", "stack_apply", "stack_job_status"]
+          }
+        },
+        "required": ["operation"]
+      },
+      "then": {
+        "required": ["stack_name"]
+      }
+    }
+  ]
+}
