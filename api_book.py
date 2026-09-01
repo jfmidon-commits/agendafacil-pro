@@ -17,11 +17,6 @@ from firebase_admin import firestore
 
 from availability_engine import LOCAL_TZ, _to_aware_datetime, check_availability
 
-if not firebase_admin._apps:
-    firebase_admin.initialize_app()
-
-db = firestore.client()
-
 
 class SlotUnavailableException(Exception):
     """Requested slot is no longer available."""
@@ -43,6 +38,13 @@ class InvalidPayloadException(Exception):
     pass
 
 
+def _get_default_db():
+    """Create the production Firestore client lazily, never during test import."""
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app()
+    return firestore.client()
+
+
 @firestore.transactional
 def _book_transaction(
     transaction: Any,
@@ -57,10 +59,8 @@ def _book_transaction(
     All Firestore reads happen before the first write. The function has no
     external side effects, so Firestore may safely retry it on contention.
     """
-
     starts_local = _to_aware_datetime(starts_at, LOCAL_TZ)
 
-    # READ 1: service and ownership/active state.
     service_ref = db_client.collection("services").document(service_id)
     service_doc = service_ref.get(transaction=transaction)
     if not service_doc.exists:
@@ -85,12 +85,10 @@ def _book_transaction(
     if starts_local >= ends_local:
         raise InvalidPayloadException("Horário inicial deve ser anterior ao final")
 
-    # READ 2: deterministic lock for professional + local day.
     date_key = starts_local.strftime("%Y%m%d")
     lock_ref = db_client.collection("bookingLocks").document(f"{user_id}_{date_key}")
     lock_doc = lock_ref.get(transaction=transaction)
 
-    # READS 3..N: final availability validation in the same transaction.
     availability = check_availability(
         user_id,
         starts_local,
@@ -103,7 +101,6 @@ def _book_transaction(
     if not availability.get("available"):
         raise SlotUnavailableException(availability.get("reason", "Horário indisponível"))
 
-    # WRITES only after all reads.
     current_version = 0
     if lock_doc.exists:
         current_version = int((lock_doc.to_dict() or {}).get("version", 0) or 0)
@@ -142,10 +139,7 @@ def _book_transaction(
     }
     transaction.set(appointment_ref, appointment_data)
 
-    return {
-        "appointmentId": appointment_ref.id,
-        "appointment": appointment_data,
-    }
+    return {"appointmentId": appointment_ref.id, "appointment": appointment_data}
 
 
 def create_booking_transactional(
@@ -155,15 +149,12 @@ def create_booking_transactional(
     starts_at: Any,
     request_data: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Run the production Firestore transactional booking function."""
-
     transaction = db_client.transaction()
     return _book_transaction(transaction, db_client, user_id, service_id, starts_at, request_data)
 
 
 def api_book(request):
     """Cloud Function HTTP endpoint for secure appointment creation."""
-
     if request.method == "OPTIONS":
         headers = {
             "Access-Control-Allow-Origin": "*",
@@ -191,7 +182,7 @@ def api_book(request):
             )
 
         result = create_booking_transactional(
-            db,
+            _get_default_db(),
             data["userId"],
             data["serviceId"],
             starts_at,
@@ -220,7 +211,6 @@ def api_book(request):
             409,
         )
     except Exception:
-        # Do not leak Firestore/internal details to the public endpoint.
         return json_response({"error": "Erro interno ao processar agendamento."}, 500)
 
 
