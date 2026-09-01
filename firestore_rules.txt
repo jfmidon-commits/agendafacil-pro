@@ -66,6 +66,14 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════
+    // COLEÇÃO: bookingLocks (CONTROLE INTERNO DO BACKEND)
+    // ═══════════════════════════════════════════════════════
+    match /bookingLocks/{lockId} {
+      // O Admin SDK não é governado por estas regras. Clientes nunca acessam locks.
+      allow read, write: if false;
+    }
+
+    // ═══════════════════════════════════════════════════════
     // COLEÇÃO: subscriptions (apenas leitura pelo dono, escrita via webhook)
     // ═══════════════════════════════════════════════════════
     match /subscriptions/{subscriptionId} {
