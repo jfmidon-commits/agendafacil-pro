@@ -1,6 +1,6 @@
 {
   "$schema": "ops/oci-request.schema.json",
-  "request_id": "inventory-evolution-v2-20260901-007",
+  "request_id": "inventory-evolution-v2-20260901-008",
   "operation": "inventory",
   "instance_name": "agendafacil-evolution-v2"
 }
