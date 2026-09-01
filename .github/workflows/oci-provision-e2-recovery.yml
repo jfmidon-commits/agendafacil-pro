@@ -1,0 +1,102 @@
+name: OCI Provision E2 Recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ops/oci-provision-request.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oci-provision-e2-recovery
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate OCI secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_PRIVATE_KEY OCI_REGION; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is not configured"
+              exit 1
+            fi
+          done
+
+      - name: Install OCI CLI
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check --quiet oci-cli
+          oci --version
+
+      - name: Configure OCI authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          oci iam region-subscription list --output table >/dev/null
+          echo "OCI authentication OK"
+
+      - name: Validate provision request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST="ops/oci-provision-request.json"
+          [ -f "$REQUEST" ] || { echo "::error::$REQUEST not found"; exit 1; }
+          jq empty "$REQUEST"
+
+          OPERATION="$(jq -r '.operation // empty' "$REQUEST")"
+          SOURCE_INSTANCE_NAME="$(jq -r '.source_instance_name // "agendafacil-evolution"' "$REQUEST")"
+          TARGET_INSTANCE_NAME="$(jq -r '.target_instance_name // "agendafacil-evolution-v2"' "$REQUEST")"
+
+          [ "$OPERATION" = "provision_e2_recovery" ] || { echo "::error::Unsupported operation: $OPERATION"; exit 2; }
+          [ -n "$SOURCE_INSTANCE_NAME" ] || { echo "::error::source_instance_name is required"; exit 2; }
+          [ -n "$TARGET_INSTANCE_NAME" ] || { echo "::error::target_instance_name is required"; exit 2; }
+          [ "$SOURCE_INSTANCE_NAME" != "$TARGET_INSTANCE_NAME" ] || { echo "::error::target must differ from source"; exit 2; }
+
+          echo "source=$SOURCE_INSTANCE_NAME" >> "$GITHUB_OUTPUT"
+          echo "target=$TARGET_INSTANCE_NAME" >> "$GITHUB_OUTPUT"
+          echo "Provision request validated"
+
+      - name: Provision guarded E2 recovery VM
+        shell: bash
+        env:
+          SOURCE_INSTANCE_NAME: ${{ steps.request.outputs.source }}
+          TARGET_INSTANCE_NAME: ${{ steps.request.outputs.target }}
+        run: |
+          set -euo pipefail
+          bash scripts/provision_e2_recovery.sh
