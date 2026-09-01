@@ -16,14 +16,16 @@ from firebase_admin import firestore
 
 LOCAL_TZ = ZoneInfo("America/Sao_Paulo")
 
-if not firebase_admin._apps:
-    firebase_admin.initialize_app()
-
-db = firestore.client()
-
 
 class SlotUnavailableException(Exception):
     """Raised when a requested slot cannot be booked."""
+
+
+def _get_default_db():
+    """Create the production Firestore client lazily, never during test import."""
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app()
+    return firestore.client()
 
 
 def _to_aware_datetime(value: Any, tz: ZoneInfo = LOCAL_TZ) -> datetime:
@@ -33,7 +35,6 @@ def _to_aware_datetime(value: Any, tz: ZoneInfo = LOCAL_TZ) -> datetime:
     public API are persisted as instants. Local wall-clock input should include
     an offset explicitly.
     """
-
     if isinstance(value, str):
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     elif hasattr(value, "to_datetime"):
@@ -42,15 +43,12 @@ def _to_aware_datetime(value: Any, tz: ZoneInfo = LOCAL_TZ) -> datetime:
         parsed = value
     else:
         raise ValueError(f"Formato de data inválido: {type(value)!r}")
-
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(tz)
 
 
 def _firestore_instant(value: datetime) -> datetime:
-    """Convert an aware datetime to UTC for Firestore range queries."""
-
     if value.tzinfo is None:
         raise ValueError("datetime must be timezone-aware")
     return value.astimezone(timezone.utc)
@@ -58,20 +56,16 @@ def _firestore_instant(value: datetime) -> datetime:
 
 def _schema_day_of_week(local_date: date) -> int:
     """Return schema dayOfWeek: 0=Sunday, 1=Monday, ..., 6=Saturday."""
-
     return (local_date.weekday() + 1) % 7
 
 
 def _overlaps(start_a: datetime, end_a: datetime, start_b: datetime, end_b: datetime) -> bool:
     """Return True when semi-open intervals [start, end) overlap."""
-
     return max(start_a, start_b) < min(end_a, end_b)
 
 
 def _query_docs(query: Any, transaction: Any = None) -> Iterable[Any]:
-    if transaction is not None:
-        return query.get(transaction=transaction)
-    return query.get()
+    return query.get(transaction=transaction) if transaction is not None else query.get()
 
 
 def _day_rules(db_client: Any, user_id: str, local_date: date, transaction: Any = None) -> List[Dict[str, Any]]:
@@ -101,17 +95,11 @@ def _rule_window(rule: Dict[str, Any], local_date: date, tz: ZoneInfo) -> Option
     start_dt = datetime.combine(local_date, start_t, tzinfo=tz)
     end_dt = datetime.combine(local_date, end_t, tzinfo=tz)
     if end_dt <= start_dt:
-        # Overnight availability rules are not part of the current schema contract.
         return None
     return start_dt, end_dt
 
 
-def _fits_any_rule(
-    required_start: datetime,
-    required_end: datetime,
-    rules: List[Dict[str, Any]],
-    tz: ZoneInfo,
-) -> bool:
+def _fits_any_rule(required_start: datetime, required_end: datetime, rules: List[Dict[str, Any]], tz: ZoneInfo) -> bool:
     local_date = required_start.astimezone(tz).date()
     for rule in rules:
         window = _rule_window(rule, local_date, tz)
@@ -124,20 +112,13 @@ def _fits_any_rule(
 
 
 def _candidate_window(local_date: date, tz: ZoneInfo) -> Tuple[datetime, datetime]:
-    """Bound candidate reads around the requested day while covering cross-day overlaps."""
-
+    """Bound reads while covering blocks/appointments that started across midnight."""
     day_start = datetime.combine(local_date, time.min, tzinfo=tz)
     day_end = day_start + timedelta(days=1)
     return day_start - timedelta(days=1), day_end + timedelta(days=1)
 
 
-def _load_schedule_blocks(
-    db_client: Any,
-    user_id: str,
-    local_date: date,
-    transaction: Any = None,
-    tz: ZoneInfo = LOCAL_TZ,
-) -> List[Dict[str, Any]]:
+def _load_schedule_blocks(db_client: Any, user_id: str, local_date: date, transaction: Any = None, tz: ZoneInfo = LOCAL_TZ) -> List[Dict[str, Any]]:
     query_start, query_end = _candidate_window(local_date, tz)
     query = (
         db_client.collection("scheduleBlocks")
@@ -153,13 +134,7 @@ def _load_schedule_blocks(
     return result
 
 
-def _load_appointments(
-    db_client: Any,
-    user_id: str,
-    local_date: date,
-    transaction: Any = None,
-    tz: ZoneInfo = LOCAL_TZ,
-) -> List[Dict[str, Any]]:
+def _load_appointments(db_client: Any, user_id: str, local_date: date, transaction: Any = None, tz: ZoneInfo = LOCAL_TZ) -> List[Dict[str, Any]]:
     query_start, query_end = _candidate_window(local_date, tz)
     query = (
         db_client.collection("appointments")
@@ -186,7 +161,6 @@ def check_availability_in_memory(
     tz: ZoneInfo = LOCAL_TZ,
 ) -> Tuple[bool, str]:
     """Pure availability validation used by Firestore and unit tests."""
-
     starts_local = _to_aware_datetime(starts_at, tz)
     ends_local = _to_aware_datetime(ends_at, tz)
     if starts_local >= ends_local:
@@ -194,7 +168,6 @@ def check_availability_in_memory(
 
     required_start = starts_local - timedelta(minutes=max(0, int(service_buffer_before or 0)))
     required_end = ends_local + timedelta(minutes=max(0, int(service_buffer_after or 0)))
-
     if not _fits_any_rule(required_start, required_end, availability_rules, tz):
         return False, "OUTSIDE_WORKING_HOURS"
 
@@ -221,7 +194,6 @@ def check_availability_in_memory(
         occupied_end = appt_end + timedelta(minutes=appt_after)
         if _overlaps(required_start, required_end, occupied_start, occupied_end):
             return False, "APPOINTMENT_CONFLICT"
-
     return True, "AVAILABLE"
 
 
@@ -238,17 +210,14 @@ def check_availability(
     """Check whether a booking interval is available.
 
     Backwards-compatible return shape: {'available': bool, 'reason': str?}.
-    When ``service_id`` is supplied, that service's buffers are applied.
     """
-
-    client = db_client or db
+    client = db_client or _get_default_db()
     tz = ZoneInfo(timezone_name)
     try:
         starts_local = _to_aware_datetime(starts_at, tz)
         ends_local = _to_aware_datetime(ends_at, tz)
     except (ValueError, TypeError) as exc:
         return {"available": False, "reason": f"INVALID_DATETIME: {exc}"}
-
     if starts_local >= ends_local:
         return {"available": False, "reason": "INVALID_INTERVAL"}
 
@@ -270,20 +239,10 @@ def check_availability(
     rules = _day_rules(client, user_id, local_date, transaction)
     blocks = _load_schedule_blocks(client, user_id, local_date, transaction, tz)
     appointments = _load_appointments(client, user_id, local_date, transaction, tz)
-
     available, reason = check_availability_in_memory(
-        starts_local,
-        ends_local,
-        before,
-        after,
-        rules,
-        blocks,
-        appointments,
-        tz,
+        starts_local, ends_local, before, after, rules, blocks, appointments, tz
     )
-    if available:
-        return {"available": True}
-    return {"available": False, "reason": reason}
+    return {"available": True} if available else {"available": False, "reason": reason}
 
 
 def get_available_slots(
@@ -295,8 +254,7 @@ def get_available_slots(
     timezone_name: str = "America/Sao_Paulo",
 ) -> List[Dict[str, Any]]:
     """Return available service start times for one local calendar day."""
-
-    client = db_client or db
+    client = db_client or _get_default_db()
     tz = ZoneInfo(timezone_name)
     if isinstance(target_date, str):
         local_date = datetime.strptime(target_date, "%Y-%m-%d").date()
@@ -313,7 +271,6 @@ def get_available_slots(
     service = service_doc.to_dict() or {}
     if service.get("userId") != user_id or not service.get("active", True):
         return []
-
     duration = int(service.get("duration", 0) or 0)
     if duration <= 0:
         return []
@@ -323,7 +280,6 @@ def get_available_slots(
     rules = _day_rules(client, user_id, local_date)
     if not rules:
         return []
-
     blocks = _load_schedule_blocks(client, user_id, local_date, tz=tz)
     appointments = _load_appointments(client, user_id, local_date, tz=tz)
 
@@ -336,40 +292,28 @@ def get_available_slots(
         interval = int(rule.get("slotDuration", 30) or 30)
         if interval <= 0:
             interval = 30
-
         current = work_start
         while current + timedelta(minutes=duration) <= work_end:
             ends_at = current + timedelta(minutes=duration)
             available, _ = check_availability_in_memory(
-                current,
-                ends_at,
-                buffer_before,
-                buffer_after,
-                rules,
-                blocks,
-                appointments,
-                tz,
+                current, ends_at, buffer_before, buffer_after, rules, blocks, appointments, tz
             )
             if available:
-                slots.append(
-                    {
-                        "time": current.strftime("%H:%M"),
-                        "startsAt": current.isoformat(),
-                        "endsAt": ends_at.isoformat(),
-                        "available": True,
-                        "duration": duration,
-                        "totalDuration": duration + buffer_before + buffer_after,
-                    }
-                )
+                slots.append({
+                    "time": current.strftime("%H:%M"),
+                    "startsAt": current.isoformat(),
+                    "endsAt": ends_at.isoformat(),
+                    "available": True,
+                    "duration": duration,
+                    "totalDuration": duration + buffer_before + buffer_after,
+                })
             current += timedelta(minutes=interval)
-
     slots.sort(key=lambda item: item["startsAt"])
     return slots
 
 
 if __name__ == "__main__":
     from datetime import date as _date
-
     tomorrow = _date.today() + timedelta(days=1)
     for slot in get_available_slots("demo-profissional-001", tomorrow, "service-001")[:10]:
         print(slot)
