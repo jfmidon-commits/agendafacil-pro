@@ -1,5 +1,5 @@
 {
-  "request_id": "status-ssh-recovery-20260831-1811",
+  "request_id": "diagnose-ssh-recovery-20260901-1112",
   "operation": "run_command_status",
   "instance_name": "agendafacil-evolution",
   "script_b64": ""
