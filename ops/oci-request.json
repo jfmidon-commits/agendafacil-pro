@@ -1,7 +1,6 @@
 {
   "$schema": "ops/oci-request.schema.json",
-  "request_id": "run-command-status-20260901-006",
-  "operation": "run_command_status",
-  "instance_name": "agendafacil-evolution",
-  "script_b64": ""
+  "request_id": "inventory-evolution-v2-20260901-007",
+  "operation": "inventory",
+  "instance_name": "agendafacil-evolution-v2"
 }
