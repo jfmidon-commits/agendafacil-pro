@@ -1,0 +1,167 @@
+name: OCI Console History Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ops/oci-console-history-request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oci-console-history
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
+      SUPPRESS_LABEL_WARNING: "True"
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate OCI secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_PRIVATE_KEY OCI_REGION; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is not configured"
+              exit 1
+            fi
+          done
+
+      - name: Install OCI CLI
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check --quiet oci-cli
+          oci --version
+
+      - name: Configure OCI authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          oci iam region-subscription list --output table >/dev/null
+          echo "OCI authentication OK"
+
+      - name: Capture console history
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST="ops/oci-console-history-request.json"
+          if [ ! -f "$REQUEST" ]; then
+            echo "::error::$REQUEST not found"
+            exit 1
+          fi
+
+          INSTANCE_NAME="$(jq -r '.instance_name // empty' "$REQUEST")"
+          REQUEST_ID="$(jq -r '.request_id // "unspecified"' "$REQUEST")"
+          if [ -z "$INSTANCE_NAME" ]; then
+            echo "::error::instance_name is required"
+            exit 1
+          fi
+
+          echo "Request: $REQUEST_ID"
+          echo "Instance: $INSTANCE_NAME"
+
+          SEARCH_JSON="$(oci search resource structured-search \
+            --query-text "query instance resources where displayName = '$INSTANCE_NAME'" \
+            --query 'data.items[0]' \
+            --raw-output)"
+          if [ -z "$SEARCH_JSON" ] || [ "$SEARCH_JSON" = "null" ]; then
+            echo "::error::Instance '$INSTANCE_NAME' not found"
+            exit 2
+          fi
+
+          IID="$(printf '%s' "$SEARCH_JSON" | jq -r '.identifier')"
+          echo "Instance OCID: ${IID:0:30}... (truncated)"
+
+          echo "=== INSTANCE + AGENT CONFIG ==="
+          oci compute instance get \
+            --instance-id "$IID" \
+            --query 'data.{name:"display-name",state:"lifecycle-state",shape:shape,agent:"agent-config"}' \
+            --output json
+
+          HIST_ID="$(oci compute console-history capture \
+            --instance-id "$IID" \
+            --query 'data.id' \
+            --raw-output)"
+          if [ -z "$HIST_ID" ] || [ "$HIST_ID" = "null" ]; then
+            echo "::error::Console history capture returned no ID"
+            exit 3
+          fi
+          echo "Console capture: ${HIST_ID:0:30}... (truncated)"
+
+          cleanup() {
+            oci compute console-history delete \
+              --instance-console-history-id "$HIST_ID" \
+              --force >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in {1..30}; do
+            STATE="$(oci compute console-history get \
+              --instance-console-history-id "$HIST_ID" \
+              --query 'data."lifecycle-state"' \
+              --raw-output 2>/dev/null || true)"
+            echo "Console capture state=$STATE (attempt $attempt/30)"
+            case "$STATE" in
+              SUCCEEDED) break ;;
+              FAILED) echo "::error::Console history capture failed"; exit 4 ;;
+            esac
+            sleep 5
+          done
+
+          STATE="$(oci compute console-history get \
+            --instance-console-history-id "$HIST_ID" \
+            --query 'data."lifecycle-state"' \
+            --raw-output)"
+          if [ "$STATE" != "SUCCEEDED" ]; then
+            echo "::error::Console history capture did not complete"
+            exit 5
+          fi
+
+          oci compute console-history get-content \
+            --instance-console-history-id "$HIST_ID" \
+            --file /tmp/oci-console-history.txt
+
+          # Remove terminal escape sequences before displaying diagnostics.
+          sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' /tmp/oci-console-history.txt > /tmp/oci-console-clean.txt || \
+            cp /tmp/oci-console-history.txt /tmp/oci-console-clean.txt
+
+          echo "=== TARGETED BOOT DIAGNOSTICS ==="
+          grep -Ein 'cloud-init|oracle-cloud-agent|ocarun|docker|swap|apt|error|failed|failure|warning' \
+            /tmp/oci-console-clean.txt | tail -n 250 || true
+
+          echo "=== CONSOLE TAIL ==="
+          tail -n 250 /tmp/oci-console-clean.txt || true
+
+          echo "CONSOLE_HISTORY_DIAGNOSTIC_DONE"
