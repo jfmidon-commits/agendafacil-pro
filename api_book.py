@@ -39,14 +39,12 @@ class InvalidPayloadException(Exception):
 
 
 def _get_default_db():
-    """Create the production Firestore client lazily, never during test import."""
     if not firebase_admin._apps:
         firebase_admin.initialize_app()
     return firestore.client()
 
 
-@firestore.transactional
-def _book_transaction(
+def _book_transaction_body(
     transaction: Any,
     db_client: Any,
     user_id: str,
@@ -54,11 +52,7 @@ def _book_transaction(
     starts_at: Any,
     request_data: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Validate and create one appointment atomically.
-
-    All Firestore reads happen before the first write. The function has no
-    external side effects, so Firestore may safely retry it on contention.
-    """
+    """Transaction body, kept side-effect-free outside Firestore writes."""
     starts_local = _to_aware_datetime(starts_at, LOCAL_TZ)
 
     service_ref = db_client.collection("services").document(service_id)
@@ -138,8 +132,19 @@ def _book_transaction(
         "createdAt": firestore.SERVER_TIMESTAMP,
     }
     transaction.set(appointment_ref, appointment_data)
-
     return {"appointmentId": appointment_ref.id, "appointment": appointment_data}
+
+
+@firestore.transactional
+def _book_transaction(
+    transaction: Any,
+    db_client: Any,
+    user_id: str,
+    service_id: str,
+    starts_at: Any,
+    request_data: Dict[str, Any],
+) -> Dict[str, Any]:
+    return _book_transaction_body(transaction, db_client, user_id, service_id, starts_at, request_data)
 
 
 def create_booking_transactional(
@@ -162,7 +167,6 @@ def api_book(request):
             "Access-Control-Allow-Headers": "Content-Type",
         }
         return "", 204, headers
-
     if request.method != "POST":
         return json_response({"error": "Método não permitido"}, 405)
 
@@ -172,21 +176,13 @@ def api_book(request):
         missing = [field for field in required if not data.get(field)]
         if missing:
             return json_response({"error": f"Campos obrigatórios: {missing}"}, 400)
-
         try:
             starts_at = _to_aware_datetime(data["startsAt"], LOCAL_TZ)
         except (ValueError, TypeError):
-            return json_response(
-                {"error": "Formato inválido para startsAt. Use ISO 8601 com timezone."},
-                400,
-            )
+            return json_response({"error": "Formato inválido para startsAt. Use ISO 8601 com timezone."}, 400)
 
         result = create_booking_transactional(
-            _get_default_db(),
-            data["userId"],
-            data["serviceId"],
-            starts_at,
-            data,
+            _get_default_db(), data["userId"], data["serviceId"], starts_at, data
         )
         return json_response(
             {
@@ -196,7 +192,6 @@ def api_book(request):
             },
             201,
         )
-
     except InvalidPayloadException as exc:
         return json_response({"error": str(exc)}, 400)
     except ServiceInactiveException as exc:
@@ -215,8 +210,5 @@ def api_book(request):
 
 
 def json_response(data, status_code=200):
-    headers = {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-    }
+    headers = {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}
     return json.dumps(data, default=str), status_code, headers
