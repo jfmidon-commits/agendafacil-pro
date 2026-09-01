@@ -1,168 +1,232 @@
-"""
-═══════════════════════════════════════════════════════════════
-  AGENDAFÁCIL PRO - API /api/book (Cloud Function)
+"""AgendaFácil Pro /api/book Cloud Function.
 
-  Endpoint seguro para criação de agendamentos com:
-  - Validação de disponibilidade
-  - Cálculo de buffers
-  - Operação atômica (transação)
-  - Prevenção de dupla reserva
-
-  DEPLOY:
-  1. Salvar como main.py
-  2. Deploy: gcloud functions deploy api_book --runtime python311 --trigger-http --allow-unauthenticated
-═══════════════════════════════════════════════════════════════
+The HTTP contract remains compatible with the existing endpoint while the final
+availability validation and appointment creation happen in one Firestore
+transaction. A deterministic professional/day lock forces concurrent bookings
+for the same professional/day to contend on the same document.
 """
+
+from __future__ import annotations
+
+import json
+from datetime import timedelta
+from typing import Any, Dict
 
 import firebase_admin
-from firebase_admin import credentials, firestore
-import json
-from datetime import datetime, timedelta, timezone
-import os
+from firebase_admin import firestore
 
-# Inicializar Firebase (no Cloud Functions usa Application Default Credentials)
+from availability_engine import LOCAL_TZ, _to_aware_datetime, check_availability
+
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
 
 db = firestore.client()
 
-def api_book(request):
-    """Cloud Function HTTP para criar agendamentos de forma segura."""
 
-    # CORS
-    if request.method == 'OPTIONS':
-        headers = {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST',
-            'Access-Control-Allow-Headers': 'Content-Type'
-        }
-        return ('', 204, headers)
+class SlotUnavailableException(Exception):
+    """Requested slot is no longer available."""
 
-    if request.method != 'POST':
-        return json_response({'error': 'Método não permitido'}, 405)
+
+class ServiceNotFoundException(Exception):
+    pass
+
+
+class ServiceForbiddenException(Exception):
+    pass
+
+
+class ServiceInactiveException(Exception):
+    pass
+
+
+class InvalidPayloadException(Exception):
+    pass
+
+
+@firestore.transactional
+def _book_transaction(
+    transaction: Any,
+    db_client: Any,
+    user_id: str,
+    service_id: str,
+    starts_at: Any,
+    request_data: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Validate and create one appointment atomically.
+
+    All Firestore reads happen before the first write. The function has no
+    external side effects, so Firestore may safely retry it on contention.
+    """
+
+    starts_local = _to_aware_datetime(starts_at, LOCAL_TZ)
+
+    # READ 1: service and ownership/active state.
+    service_ref = db_client.collection("services").document(service_id)
+    service_doc = service_ref.get(transaction=transaction)
+    if not service_doc.exists:
+        raise ServiceNotFoundException("Serviço não encontrado")
+
+    service = service_doc.to_dict() or {}
+    if service.get("userId") != user_id:
+        raise ServiceForbiddenException("Serviço não pertence a este profissional")
+    if not service.get("active", True):
+        raise ServiceInactiveException("Serviço está inativo")
 
     try:
-        data = request.get_json()
+        service_duration = int(service.get("duration", 0))
+        buffer_before = max(0, int(service.get("bufferBefore", 0) or 0))
+        buffer_after = max(0, int(service.get("bufferAfter", 0) or 0))
+    except (TypeError, ValueError) as exc:
+        raise InvalidPayloadException("Configuração de serviço inválida") from exc
+    if service_duration <= 0:
+        raise InvalidPayloadException("Duração do serviço deve ser maior que zero")
 
-        # ─── VALIDAÇÃO DOS CAMPOS OBRIGATÓRIOS ───
-        required = ['userId', 'serviceId', 'clientName', 'clientPhone', 'startsAt']
-        missing = [f for f in required if f not in data or not data[f]]
+    ends_local = starts_local + timedelta(minutes=service_duration)
+    if starts_local >= ends_local:
+        raise InvalidPayloadException("Horário inicial deve ser anterior ao final")
+
+    # READ 2: deterministic lock for professional + local day.
+    date_key = starts_local.strftime("%Y%m%d")
+    lock_ref = db_client.collection("bookingLocks").document(f"{user_id}_{date_key}")
+    lock_doc = lock_ref.get(transaction=transaction)
+
+    # READS 3..N: final availability validation in the same transaction.
+    availability = check_availability(
+        user_id,
+        starts_local,
+        ends_local,
+        service_id,
+        db_client=db_client,
+        transaction=transaction,
+        timezone_name="America/Sao_Paulo",
+    )
+    if not availability.get("available"):
+        raise SlotUnavailableException(availability.get("reason", "Horário indisponível"))
+
+    # WRITES only after all reads.
+    current_version = 0
+    if lock_doc.exists:
+        current_version = int((lock_doc.to_dict() or {}).get("version", 0) or 0)
+    transaction.set(
+        lock_ref,
+        {
+            "userId": user_id,
+            "date": date_key,
+            "lastBookingAt": firestore.SERVER_TIMESTAMP,
+            "version": current_version + 1,
+        },
+        merge=True,
+    )
+
+    appointment_ref = db_client.collection("appointments").document()
+    appointment_data = {
+        "userId": user_id,
+        "serviceId": service_id,
+        "serviceName": service.get("name", ""),
+        "serviceDuration": service_duration,
+        "bufferBefore": buffer_before,
+        "bufferAfter": buffer_after,
+        "totalDuration": service_duration + buffer_before + buffer_after,
+        "clientName": request_data["clientName"],
+        "clientPhone": request_data["clientPhone"],
+        "clientEmail": request_data.get("clientEmail", ""),
+        "startsAt": starts_local,
+        "endsAt": ends_local,
+        "timezone": request_data.get("timezone", "America/Sao_Paulo"),
+        "status": "confirmed",
+        "notes": request_data.get("notes", ""),
+        "reminderSent": False,
+        "cancelledAt": None,
+        "cancelledBy": None,
+        "createdAt": firestore.SERVER_TIMESTAMP,
+    }
+    transaction.set(appointment_ref, appointment_data)
+
+    return {
+        "appointmentId": appointment_ref.id,
+        "appointment": appointment_data,
+    }
+
+
+def create_booking_transactional(
+    db_client: Any,
+    user_id: str,
+    service_id: str,
+    starts_at: Any,
+    request_data: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Run the production Firestore transactional booking function."""
+
+    transaction = db_client.transaction()
+    return _book_transaction(transaction, db_client, user_id, service_id, starts_at, request_data)
+
+
+def api_book(request):
+    """Cloud Function HTTP endpoint for secure appointment creation."""
+
+    if request.method == "OPTIONS":
+        headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
+        return "", 204, headers
+
+    if request.method != "POST":
+        return json_response({"error": "Método não permitido"}, 405)
+
+    try:
+        data = request.get_json() or {}
+        required = ["userId", "serviceId", "clientName", "clientPhone", "startsAt"]
+        missing = [field for field in required if not data.get(field)]
         if missing:
-            return json_response({'error': f'Campos obrigatórios: {missing}'}, 400)
+            return json_response({"error": f"Campos obrigatórios: {missing}"}, 400)
 
-        user_id = data['userId']
-        service_id = data['serviceId']
-        starts_at_str = data['startsAt']
-
-        # ─── PARSE DO startsAt ───
         try:
-            starts_at = datetime.fromisoformat(starts_at_str.replace('Z', '+00:00'))
-            if starts_at.tzinfo is None:
-                starts_at = starts_at.replace(tzinfo=timezone.utc)
-        except:
-            return json_response({'error': 'Formato inválido para startsAt. Use ISO 8601 (ex: 2026-08-29T14:00:00-03:00)'}, 400)
+            starts_at = _to_aware_datetime(data["startsAt"], LOCAL_TZ)
+        except (ValueError, TypeError):
+            return json_response(
+                {"error": "Formato inválido para startsAt. Use ISO 8601 com timezone."},
+                400,
+            )
 
-        # ─── BUSCAR SERVIÇO ───
-        service_doc = db.collection('services').document(service_id).get()
-        if not service_doc.exists:
-            return json_response({'error': 'Serviço não encontrado'}, 404)
+        result = create_booking_transactional(
+            db,
+            data["userId"],
+            data["serviceId"],
+            starts_at,
+            data,
+        )
+        return json_response(
+            {
+                "success": True,
+                "appointmentId": result["appointmentId"],
+                "message": "Agendamento confirmado!",
+            },
+            201,
+        )
 
-        service = service_doc.to_dict()
-        if service['userId'] != user_id:
-            return json_response({'error': 'Serviço não pertence a este profissional'}, 403)
-
-        if not service.get('active', True):
-            return json_response({'error': 'Serviço está inativo'}, 400)
-
-        # ─── CALCULAR DURAÇÃO TOTAL ───
-        service_duration = service['duration']
-        buffer_before = service.get('bufferBefore', 0)
-        buffer_after = service.get('bufferAfter', 0)
-        total_duration = service_duration + buffer_before + buffer_after
-
-        ends_at = starts_at + timedelta(minutes=service_duration)
-        total_start = starts_at - timedelta(minutes=buffer_before)
-        total_end = ends_at + timedelta(minutes=buffer_after)
-
-        # ─── VERIFICAR DISPONIBILIDADE (TRANSAÇÃO ATÔMICA) ───
-        @firestore.transactional
-        def check_and_create(transaction, user_id, total_start, total_end):
-            # Buscar agendamentos existentes que possam conflitar
-            existing = db.collection('appointments')\
-                .where('userId', '==', user_id)\
-                .where('status', 'in', ['confirmed', 'completed'])\
-                .get(transaction=transaction)
-
-            for appt in existing:
-                appt_data = appt.to_dict()
-                appt_start = appt_data['startsAt']
-                appt_end = appt_data['endsAt']
-
-                # Verificar overlap
-                if total_start < appt_end and total_end > appt_start:
-                    return {'error': 'Horário indisponível (conflito com outro agendamento)'}
-
-            # Buscar scheduleBlocks
-            blocks = db.collection('scheduleBlocks')\
-                .where('userId', '==', user_id)\
-                .get(transaction=transaction)
-
-            for block in blocks:
-                block_data = block.to_dict()
-                block_start = block_data['startAt']
-                block_end = block_data['endAt']
-
-                if total_start < block_end and total_end > block_start:
-                    return {'error': f'Horário indisponível (bloqueado: {block_data.get("reason", "Indisponível")})'}
-
-            # Criar o agendamento
-            appointment_data = {
-                'userId': user_id,
-                'serviceId': service_id,
-                'serviceName': service['name'],
-                'serviceDuration': service_duration,
-                'bufferBefore': buffer_before,
-                'bufferAfter': buffer_after,
-                'totalDuration': total_duration,
-                'clientName': data['clientName'],
-                'clientPhone': data['clientPhone'],
-                'clientEmail': data.get('clientEmail', ''),
-                'startsAt': starts_at,
-                'endsAt': ends_at,
-                'timezone': data.get('timezone', 'America/Sao_Paulo'),
-                'status': 'confirmed',
-                'notes': data.get('notes', ''),
-                'reminderSent': False,
-                'cancelledAt': None,
-                'cancelledBy': None,
-                'createdAt': datetime.now(timezone.utc)
-            }
-
-            new_ref = db.collection('appointments').document()
-            transaction.set(new_ref, appointment_data)
-
-            return {
-                'success': True,
-                'appointmentId': new_ref.id,
-                'message': 'Agendamento confirmado!'
-            }
-
-        transaction = db.transaction()
-        result = check_and_create(transaction, user_id, total_start, total_end)
-
-        if 'error' in result:
-            return json_response(result, 409)
-
-        return json_response(result, 201)
-
-    except Exception as e:
-        return json_response({'error': str(e)}, 500)
+    except InvalidPayloadException as exc:
+        return json_response({"error": str(exc)}, 400)
+    except ServiceInactiveException as exc:
+        return json_response({"error": str(exc)}, 400)
+    except ServiceForbiddenException as exc:
+        return json_response({"error": str(exc)}, 403)
+    except ServiceNotFoundException as exc:
+        return json_response({"error": str(exc)}, 404)
+    except SlotUnavailableException as exc:
+        return json_response(
+            {"error": "Horário indisponível", "code": "SLOT_UNAVAILABLE", "reason": str(exc)},
+            409,
+        )
+    except Exception:
+        # Do not leak Firestore/internal details to the public endpoint.
+        return json_response({"error": "Erro interno ao processar agendamento."}, 500)
 
 
 def json_response(data, status_code=200):
-    """Helper para retornar JSON com CORS."""
     headers = {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
     }
-    return (json.dumps(data, default=str), status_code, headers)
+    return json.dumps(data, default=str), status_code, headers
