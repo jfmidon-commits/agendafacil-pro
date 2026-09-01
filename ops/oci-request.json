@@ -1,8 +1,7 @@
 {
   "$schema": "ops/oci-request.schema.json",
-  "request_id": "stack-status-agendafacil-20260901-001",
-  "operation": "stack_status",
+  "request_id": "inventory-agendafacil-20260901-002",
+  "operation": "inventory",
   "instance_name": "agendafacil-evolution",
-  "stack_name": "agendafacil-evolution",
   "script_b64": ""
 }
