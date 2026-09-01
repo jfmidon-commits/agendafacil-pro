@@ -73,23 +73,63 @@ jobs:
 
           REQUEST="ops/oci-iam-request.json"
           jq empty "$REQUEST"
-          INSTANCE_NAME="$(jq -r '.instance_name // "agendafacil-evolution"' "$REQUEST")"
           DG_NAME="$(jq -r '.dynamic_group_name // "AgendaFacilRunCommand"' "$REQUEST")"
           POLICY_NAME="$(jq -r '.policy_name // "AgendaFacilRunCommandPolicy"' "$REQUEST")"
 
-          echo "Locating instance: $INSTANCE_NAME"
-          SEARCH_JSON="$(oci search resource structured-search \
-            --query-text "query instance resources where displayName = '$INSTANCE_NAME'" \
-            --query 'data.items[0]' \
-            --raw-output)"
+          mapfile -t INSTANCE_NAMES < <(
+            jq -r '
+              if ((.instance_names? | type) == "array" and (.instance_names | length) > 0)
+              then .instance_names[]
+              else (.instance_name // "agendafacil-evolution")
+              end
+            ' "$REQUEST"
+          )
 
-          [ -n "$SEARCH_JSON" ] && [ "$SEARCH_JSON" != "null" ] || { echo "::error::Instance not found"; exit 2; }
+          if [ "${#INSTANCE_NAMES[@]}" -lt 1 ] || [ "${#INSTANCE_NAMES[@]}" -gt 5 ]; then
+            echo "::error::instance_names must contain between 1 and 5 targets"
+            exit 2
+          fi
 
-          IID="$(echo "$SEARCH_JSON" | jq -r '.identifier')"
-          INSTANCE_COMPARTMENT="$(echo "$SEARCH_JSON" | jq -r '."compartment-id"')"
+          INSTANCE_IDS=()
+          INSTANCE_COMPARTMENT=""
+          for INSTANCE_NAME in "${INSTANCE_NAMES[@]}"; do
+            [ -n "$INSTANCE_NAME" ] || { echo "::error::Empty instance name is not allowed"; exit 2; }
+            echo "Locating instance: $INSTANCE_NAME"
+            SEARCH_JSON="$(oci search resource structured-search \
+              --query-text "query instance resources where displayName = '$INSTANCE_NAME'" \
+              --query 'data.items[0]' \
+              --raw-output)"
 
-          echo "Instance OCID: $IID"
-          echo "Instance compartment: $INSTANCE_COMPARTMENT"
+            [ -n "$SEARCH_JSON" ] && [ "$SEARCH_JSON" != "null" ] || { echo "::error::Instance '$INSTANCE_NAME' not found"; exit 3; }
+
+            IID="$(echo "$SEARCH_JSON" | jq -r '.identifier')"
+            CID="$(echo "$SEARCH_JSON" | jq -r '."compartment-id"')"
+            [ -n "$IID" ] && [ "$IID" != "null" ] || { echo "::error::Instance '$INSTANCE_NAME' has no identifier"; exit 3; }
+            [ -n "$CID" ] && [ "$CID" != "null" ] || { echo "::error::Instance '$INSTANCE_NAME' has no compartment"; exit 3; }
+
+            if [ -z "$INSTANCE_COMPARTMENT" ]; then
+              INSTANCE_COMPARTMENT="$CID"
+            elif [ "$INSTANCE_COMPARTMENT" != "$CID" ]; then
+              echo "::error::All Run Command instances must be in the same compartment for this scoped policy"
+              exit 4
+            fi
+
+            INSTANCE_IDS+=("$IID")
+            echo "Resolved $INSTANCE_NAME -> ${IID:0:30}..."
+          done
+
+          if [ "${#INSTANCE_IDS[@]}" -eq 1 ]; then
+            MATCHING_RULE="instance.id = '${INSTANCE_IDS[0]}'"
+          else
+            MATCHING_RULE="ANY {"
+            for i in "${!INSTANCE_IDS[@]}"; do
+              [ "$i" -eq 0 ] || MATCHING_RULE+=", "
+              MATCHING_RULE+="instance.id = '${INSTANCE_IDS[$i]}'"
+            done
+            MATCHING_RULE+="}"
+          fi
+
+          echo "Dynamic Group targets: ${#INSTANCE_IDS[@]} instance(s)"
 
           DG_ID="$(oci iam dynamic-group list --all \
             --query "data[?name=='$DG_NAME'] | [0].id" \
@@ -100,19 +140,21 @@ jobs:
             DG_ID="$(oci iam dynamic-group create \
               --compartment-id "$OCI_TENANCY_OCID" \
               --name "$DG_NAME" \
-              --description "AgendaFacil VM principal for OCI Run Command" \
-              --matching-rule "instance.id = '$IID'" \
+              --description "AgendaFacil VM principals for OCI Run Command" \
+              --matching-rule "$MATCHING_RULE" \
               --query 'data.id' \
               --raw-output)"
           else
-            echo "Dynamic group already exists: $DG_ID"
+            echo "Dynamic group already exists"
             CURRENT_RULE="$(oci iam dynamic-group get --dynamic-group-id "$DG_ID" --query 'data."matching-rule"' --raw-output)"
-            if [ "$CURRENT_RULE" != "instance.id = '$IID'" ]; then
-              echo "Updating dynamic group matching rule to target the current AgendaFacil instance"
+            if [ "$CURRENT_RULE" != "$MATCHING_RULE" ]; then
+              echo "Updating dynamic group matching rule without removing existing requested targets"
               oci iam dynamic-group update \
                 --dynamic-group-id "$DG_ID" \
-                --matching-rule "instance.id = '$IID'" \
+                --matching-rule "$MATCHING_RULE" \
                 --force >/dev/null
+            else
+              echo "Dynamic group matching rule already correct"
             fi
           fi
 
@@ -123,6 +165,7 @@ jobs:
             [ "$DG_STATE" = "ACTIVE" ] && break
             sleep 5
           done
+          [ "$DG_STATE" = "ACTIVE" ] || { echo "::error::Dynamic group did not become ACTIVE"; exit 5; }
 
           STATEMENT="Allow dynamic-group id $DG_ID to use instance-agent-command-execution-family in compartment id $INSTANCE_COMPARTMENT where request.instance.id=target.instance.id"
 
@@ -138,25 +181,28 @@ jobs:
             POLICY_ID="$(oci iam policy create \
               --compartment-id "$OCI_TENANCY_OCID" \
               --name "$POLICY_NAME" \
-              --description "Allow AgendaFacil VM to poll OCI Run Command executions" \
+              --description "Allow AgendaFacil VMs to poll OCI Run Command executions" \
               --statements file:///tmp/statements.json \
               --query 'data.id' \
               --raw-output)"
           else
-            echo "Policy already exists: $POLICY_ID"
-            CURRENT_STATEMENTS="$(oci iam policy get --policy-id "$POLICY_ID" --query 'data.statements' --raw-output)"
-            if ! echo "$CURRENT_STATEMENTS" | grep -Fq "$DG_ID"; then
-              echo "Updating existing policy statement"
-              printf '[%s]\n' "$(jq -Rn --arg s "$STATEMENT" '$s')" > /tmp/statements.json
+            echo "Policy already exists"
+            CURRENT_STATEMENTS="$(oci iam policy get --policy-id "$POLICY_ID" --query 'data.statements' --output json)"
+            DESIRED_STATEMENTS="$(jq -cn --arg s "$STATEMENT" '[$s]')"
+            if [ "$(printf '%s' "$CURRENT_STATEMENTS" | jq -c 'sort')" != "$(printf '%s' "$DESIRED_STATEMENTS" | jq -c 'sort')" ]; then
+              echo "Updating policy statement to the current Dynamic Group and compartment"
+              printf '%s\n' "$DESIRED_STATEMENTS" > /tmp/statements.json
               oci iam policy update \
                 --policy-id "$POLICY_ID" \
                 --statements file:///tmp/statements.json \
                 --force >/dev/null
+            else
+              echo "Policy statement already correct"
             fi
           fi
 
           echo "=== RESULT ==="
-          echo "Dynamic Group ID: $DG_ID"
-          echo "Policy ID: $POLICY_ID"
-          echo "Policy Statement: $STATEMENT"
-          echo "IAM bootstrap completed. Oracle documents that a newly-added instance can take up to 30 minutes to begin polling Run Commands."
+          echo "Dynamic Group: $DG_NAME (${DG_ID:0:30}...)"
+          echo "Policy: $POLICY_NAME (${POLICY_ID:0:30}...)"
+          echo "Configured targets: ${INSTANCE_NAMES[*]}"
+          echo "IAM bootstrap completed. Oracle documents that newly-added instances can take up to 30 minutes to begin polling Run Commands."
