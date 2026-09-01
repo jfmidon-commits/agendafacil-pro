@@ -138,39 +138,34 @@ jobs:
 
           if [ "$OPERATION" = "run_command_status" ]; then
             echo "=== RUN COMMAND EXECUTIONS ==="
-            oci instance-agent command-execution list \
+            EXEC_JSON="$(oci instance-agent command-execution list \
               --compartment-id "$INSTANCE_COMPARTMENT" \
               --instance-id "$IID" \
               --limit 10 \
               --sort-by TIMECREATED \
               --sort-order DESC \
-              --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",created:"time-created"}' \
-              --output table
+              --output json)"
+
+            printf '%s' "$EXEC_JSON" | jq -r '.data[] | [."time-created", ."delivery-state", ."display-name", ."lifecycle-state", ."instance-agent-command-id"] | @tsv' | column -t -s $'\t' || true
+
+            LATEST_CMD_ID="$(printf '%s' "$EXEC_JSON" | jq -r '.data[0]."instance-agent-command-id" // empty')"
+            if [ -z "$LATEST_CMD_ID" ]; then
+              echo "No command OCID found in execution list"
+              exit 0
+            fi
 
             echo "=== LATEST COMMAND DETAILS ==="
-            LATEST_CMD_ID="$(oci instance-agent command list \
-              --compartment-id "$INSTANCE_COMPARTMENT" \
-              --limit 1 \
-              --sort-by TIMECREATED \
-              --sort-order DESC \
-              --query 'data[0].id' \
-              --raw-output)"
+            echo "Latest command OCID: $LATEST_CMD_ID"
+            oci instance-agent command get \
+              --command-id "$LATEST_CMD_ID" \
+              --query 'data.{name:"display-name",created:"time-created",timeout:"timeout-in-seconds"}' \
+              --output table || true
 
-            if [ -n "$LATEST_CMD_ID" ] && [ "$LATEST_CMD_ID" != "None" ] && [ "$LATEST_CMD_ID" != "null" ]; then
-              echo "Latest command OCID: $LATEST_CMD_ID"
-              oci instance-agent command get \
-                --command-id "$LATEST_CMD_ID" \
-                --query 'data.{name:"display-name",created:"time-created",timeout:"timeout-in-seconds"}' \
-                --output table || true
-
-              echo "=== LATEST EXECUTION FULL DETAILS ==="
-              oci instance-agent command-execution get \
-                --command-id "$LATEST_CMD_ID" \
-                --instance-id "$IID" \
-                --output json || true
-            else
-              echo "No command OCID found"
-            fi
+            echo "=== LATEST EXECUTION FULL DETAILS ==="
+            oci instance-agent command-execution get \
+              --command-id "$LATEST_CMD_ID" \
+              --instance-id "$IID" \
+              --output json || true
             exit 0
           fi
 
@@ -204,13 +199,26 @@ jobs:
             --raw-output)"
 
           echo "Submitted Run Command: $CMD_ID"
-          sleep 15
 
-          oci instance-agent command-execution list \
-            --compartment-id "$INSTANCE_COMPARTMENT" \
-            --instance-id "$IID" \
-            --limit 10 \
-            --sort-by TIMECREATED \
-            --sort-order DESC \
-            --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",created:"time-created"}' \
-            --output table
+          for attempt in {1..12}; do
+            sleep 10
+            EXEC_ONE="$(oci instance-agent command-execution get \
+              --command-id "$CMD_ID" \
+              --instance-id "$IID" \
+              --output json 2>/dev/null || true)"
+            if [ -z "$EXEC_ONE" ]; then
+              echo "Execution not visible yet (attempt $attempt/12)"
+              continue
+            fi
+            STATE="$(printf '%s' "$EXEC_ONE" | jq -r '.data."lifecycle-state" // empty')"
+            DELIVERY="$(printf '%s' "$EXEC_ONE" | jq -r '.data."delivery-state" // empty')"
+            echo "Run Command state=$STATE delivery=$DELIVERY"
+            if [ "$STATE" = "SUCCEEDED" ] || [ "$STATE" = "FAILED" ] || [ "$STATE" = "TIMED_OUT" ] || [ "$STATE" = "CANCELED" ]; then
+              printf '%s\n' "$EXEC_ONE"
+              [ "$STATE" = "SUCCEEDED" ] || exit 5
+              exit 0
+            fi
+          done
+
+          echo "::error::Run Command did not reach a terminal state within the polling window"
+          exit 6
