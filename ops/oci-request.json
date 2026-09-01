@@ -1,6 +1,7 @@
 {
   "$schema": "ops/oci-request.schema.json",
-  "request_id": "reboot-evolution-v2-agent-20260901-010",
-  "operation": "reboot_instance",
-  "instance_name": "agendafacil-evolution-v2"
+  "request_id": "agent-smoke-evolution-v2-20260901-011",
+  "operation": "run_instance_command",
+  "instance_name": "agendafacil-evolution-v2",
+  "script_b64": "IyEvdXNyL2Jpbi9lbnYgYmFzaApzZXQgLXUKZWNobyAiQUdFTlRfVEVTVF9PSyIKaWQgfHwgdHJ1ZQpjbG91ZC1pbml0IHN0YXR1cyAtLWxvbmcgMj4mMSB8fCB0cnVlCmVjaG8gIkRPTkUiCg=="
 }
