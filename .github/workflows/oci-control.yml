@@ -17,7 +17,7 @@ concurrency:
 jobs:
   control:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
       SUPPRESS_LABEL_WARNING: "True"
@@ -89,7 +89,7 @@ jobs:
           INSTANCE_NAME="$(jq -r '.instance_name // "agendafacil-evolution"' "$REQUEST")"
 
           case "$OPERATION" in
-            inventory|run_command_status|run_instance_command) ;;
+            inventory|run_command_status|run_instance_command|reboot_instance) ;;
             *) echo "::error::Unsupported operation: $OPERATION"; exit 2 ;;
           esac
 
@@ -112,6 +112,39 @@ jobs:
 
           echo "Instance OCID: $IID"
           echo "Compartment OCID: $INSTANCE_COMPARTMENT"
+
+          if [ "$OPERATION" = "reboot_instance" ]; then
+            echo "=== PRE-REBOOT ==="
+            oci compute instance get \
+              --instance-id "$IID" \
+              --query 'data.{name:"display-name",state:"lifecycle-state",shape:shape}' \
+              --output table
+
+            echo "Issuing OCI SOFTRESET (graceful reboot; not forced RESET)"
+            oci compute instance action --instance-id "$IID" --action SOFTRESET >/dev/null
+
+            sleep 10
+            for attempt in {1..90}; do
+              STATE="$(oci compute instance get --instance-id "$IID" --query 'data."lifecycle-state"' --raw-output)"
+              echo "Reboot state=$STATE (attempt $attempt/90)"
+              if [ "$STATE" = "RUNNING" ] && [ "$attempt" -ge 3 ]; then
+                echo "=== POST-REBOOT ==="
+                oci compute instance get \
+                  --instance-id "$IID" \
+                  --query 'data.{name:"display-name",state:"lifecycle-state",shape:shape}' \
+                  --output table
+                echo "=== NETWORK AFTER REBOOT ==="
+                oci compute instance list-vnics \
+                  --instance-id "$IID" \
+                  --query 'data[].{private_ip:"private-ip",public_ip:"public-ip"}' \
+                  --output table
+                exit 0
+              fi
+              sleep 10
+            done
+            echo "::error::Instance did not return to RUNNING within 15 minutes"
+            exit 7
+          fi
 
           if [ "$OPERATION" = "inventory" ]; then
             echo "=== INSTANCE ==="
