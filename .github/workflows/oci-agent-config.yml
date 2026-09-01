@@ -1,0 +1,168 @@
+name: OCI Guarded Agent Config
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ops/oci-agent-config-request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oci-agent-config
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
+      SUPPRESS_LABEL_WARNING: "True"
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate OCI secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_PRIVATE_KEY OCI_REGION; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is not configured"
+              exit 1
+            fi
+          done
+
+      - name: Install OCI CLI
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check --quiet oci-cli
+          oci --version
+
+      - name: Configure OCI authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          oci iam region-subscription list --output table >/dev/null
+          echo "OCI authentication OK"
+
+      - name: Explicitly enable Run Command on target
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST="ops/oci-agent-config-request.json"
+          [ -f "$REQUEST" ] || { echo "::error::$REQUEST not found"; exit 1; }
+
+          REQUEST_ID="$(jq -r '.request_id // empty' "$REQUEST")"
+          INSTANCE_NAME="$(jq -r '.instance_name // empty' "$REQUEST")"
+          CONFIRM="$(jq -r '.confirm // false' "$REQUEST")"
+
+          [ -n "$REQUEST_ID" ] || { echo "::error::request_id is required"; exit 1; }
+          if [ "$INSTANCE_NAME" != "agendafacil-evolution-v2" ]; then
+            echo "::error::Guard rejected target: only agendafacil-evolution-v2 is allowed"
+            exit 2
+          fi
+          if [ "$CONFIRM" != "true" ]; then
+            echo "::error::Guard rejected request: confirm must be true"
+            exit 3
+          fi
+
+          SEARCH_JSON="$(oci search resource structured-search \
+            --query-text "query instance resources where displayName = '$INSTANCE_NAME'" \
+            --query 'data.items[0]' \
+            --raw-output)"
+          if [ -z "$SEARCH_JSON" ] || [ "$SEARCH_JSON" = "null" ]; then
+            echo "::error::Target instance not found"
+            exit 4
+          fi
+
+          IID="$(printf '%s' "$SEARCH_JSON" | jq -r '.identifier')"
+          INSTANCE_COMPARTMENT="$(printf '%s' "$SEARCH_JSON" | jq -r '."compartment-id"')"
+          INSTANCE_JSON="$(oci compute instance get --instance-id "$IID" --output json)"
+          NAME="$(printf '%s' "$INSTANCE_JSON" | jq -r '.data."display-name"')"
+          SHAPE="$(printf '%s' "$INSTANCE_JSON" | jq -r '.data.shape')"
+          STATE="$(printf '%s' "$INSTANCE_JSON" | jq -r '.data."lifecycle-state"')"
+
+          echo "Request: $REQUEST_ID"
+          echo "Validated instance: name=$NAME shape=$SHAPE state=$STATE"
+          echo "Instance OCID: ${IID:0:30}... (truncated)"
+
+          if [ "$NAME" != "agendafacil-evolution-v2" ] || [ "$SHAPE" != "VM.Standard.E2.1.Micro" ]; then
+            echo "::error::Target identity/shape guard failed"
+            exit 5
+          fi
+          if [ "$STATE" != "RUNNING" ]; then
+            echo "::error::Target must be RUNNING; current state=$STATE"
+            exit 6
+          fi
+
+          echo "=== AGENT CONFIG BEFORE ==="
+          printf '%s' "$INSTANCE_JSON" | jq '.data."agent-config"'
+          echo "=== RUN COMMAND PLUGIN BEFORE ==="
+          oci instance-agent plugin list \
+            --compartment-id "$INSTANCE_COMPARTMENT" \
+            --instanceagent-id "$IID" \
+            --all \
+            --query 'data[?name==`Compute Instance Run Command`].{plugin:name,status:status}' \
+            --output table || true
+
+          cat >/tmp/agent-config.json <<'JSON'
+          {
+            "isManagementDisabled": false,
+            "pluginsConfig": [
+              {
+                "name": "Compute Instance Run Command",
+                "desiredState": "ENABLED"
+              }
+            ]
+          }
+          JSON
+
+          oci compute instance update \
+            --instance-id "$IID" \
+            --agent-config file:///tmp/agent-config.json \
+            --force >/dev/null
+
+          echo "Agent configuration update accepted; waiting for propagation..."
+          sleep 120
+
+          echo "=== AGENT CONFIG AFTER ==="
+          oci compute instance get \
+            --instance-id "$IID" \
+            --query 'data."agent-config"' \
+            --output json
+          echo "=== RUN COMMAND PLUGIN AFTER ==="
+          oci instance-agent plugin list \
+            --compartment-id "$INSTANCE_COMPARTMENT" \
+            --instanceagent-id "$IID" \
+            --all \
+            --query 'data[?name==`Compute Instance Run Command`].{plugin:name,status:status}' \
+            --output table || true
+
+          echo "RUN_COMMAND_AGENT_CONFIG_APPLIED"
