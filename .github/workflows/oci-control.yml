@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 15
     env:
       OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
+      SUPPRESS_LABEL_WARNING: "True"
       OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
       OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
       OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
@@ -136,12 +137,40 @@ jobs:
           fi
 
           if [ "$OPERATION" = "run_command_status" ]; then
+            echo "=== RUN COMMAND EXECUTIONS ==="
             oci instance-agent command-execution list \
               --compartment-id "$INSTANCE_COMPARTMENT" \
               --instance-id "$IID" \
-              --all \
-              --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",command_id:"command-id",created:"time-created"}' \
+              --limit 10 \
+              --sort-by TIMECREATED \
+              --sort-order DESC \
+              --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",created:"time-created"}' \
               --output table
+
+            echo "=== LATEST COMMAND DETAILS ==="
+            LATEST_CMD_ID="$(oci instance-agent command list \
+              --compartment-id "$INSTANCE_COMPARTMENT" \
+              --limit 1 \
+              --sort-by TIMECREATED \
+              --sort-order DESC \
+              --query 'data[0].id' \
+              --raw-output)"
+
+            if [ -n "$LATEST_CMD_ID" ] && [ "$LATEST_CMD_ID" != "None" ] && [ "$LATEST_CMD_ID" != "null" ]; then
+              echo "Latest command OCID: $LATEST_CMD_ID"
+              oci instance-agent command get \
+                --command-id "$LATEST_CMD_ID" \
+                --query 'data.{name:"display-name",created:"time-created",timeout:"timeout-in-seconds"}' \
+                --output table || true
+
+              echo "=== LATEST EXECUTION FULL DETAILS ==="
+              oci instance-agent command-execution get \
+                --command-id "$LATEST_CMD_ID" \
+                --instance-id "$IID" \
+                --output json || true
+            else
+              echo "No command OCID found"
+            fi
             exit 0
           fi
 
@@ -180,6 +209,8 @@ jobs:
           oci instance-agent command-execution list \
             --compartment-id "$INSTANCE_COMPARTMENT" \
             --instance-id "$IID" \
-            --all \
-            --query "data[?\"command-id\"=='$CMD_ID'].{name:\"display-name\",status:\"lifecycle-state\",delivery:\"delivery-state\",command_id:\"command-id\"}" \
+            --limit 10 \
+            --sort-by TIMECREATED \
+            --sort-order DESC \
+            --query 'data[].{name:"display-name",status:"lifecycle-state",delivery:"delivery-state",created:"time-created"}' \
             --output table
