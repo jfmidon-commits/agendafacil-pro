@@ -29,10 +29,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -270,19 +270,19 @@ jobs:
 
           echo "Submitted Run Command: $CMD_ID"
 
-          for attempt in {1..12}; do
+          for attempt in {1..90}; do
             sleep 10
             EXEC_ONE="$(oci instance-agent command-execution get \
               --command-id "$CMD_ID" \
               --instance-id "$IID" \
               --output json 2>/dev/null || true)"
             if [ -z "$EXEC_ONE" ]; then
-              echo "Execution not visible yet (attempt $attempt/12)"
+              echo "Execution not visible yet (attempt $attempt/90)"
               continue
             fi
             STATE="$(printf '%s' "$EXEC_ONE" | jq -r '.data."lifecycle-state" // empty')"
             DELIVERY="$(printf '%s' "$EXEC_ONE" | jq -r '.data."delivery-state" // empty')"
-            echo "Run Command state=$STATE delivery=$DELIVERY"
+            echo "Run Command state=$STATE delivery=$DELIVERY (attempt $attempt/90)"
             if [ "$STATE" = "SUCCEEDED" ] || [ "$STATE" = "FAILED" ] || [ "$STATE" = "TIMED_OUT" ] || [ "$STATE" = "CANCELED" ]; then
               printf '%s\n' "$EXEC_ONE"
               [ "$STATE" = "SUCCEEDED" ] || exit 5
@@ -290,5 +290,5 @@ jobs:
             fi
           done
 
-          echo "::error::Run Command did not reach a terminal state within the polling window"
+          echo "::error::Run Command did not reach a terminal state within 15 minutes"
           exit 6
