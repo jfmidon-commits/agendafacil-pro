@@ -1,6 +1,8 @@
 {
-  "request_id": "soft-reboot-agendafacil-20260901-1118",
-  "operation": "reboot_instance",
+  "$schema": "ops/oci-request.schema.json",
+  "request_id": "stack-status-agendafacil-20260901-001",
+  "operation": "stack_status",
   "instance_name": "agendafacil-evolution",
+  "stack_name": "agendafacil-evolution",
   "script_b64": ""
 }
