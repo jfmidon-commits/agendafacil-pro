@@ -1,0 +1,167 @@
+name: OCI Guarded VM Power Cycle
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ops/oci-power-cycle-request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oci-power-cycle
+  cancel-in-progress: false
+
+jobs:
+  power-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: "True"
+      SUPPRESS_LABEL_WARNING: "True"
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate OCI secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_PRIVATE_KEY OCI_REGION; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is not configured"
+              exit 1
+            fi
+          done
+
+      - name: Install OCI CLI
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check --quiet oci-cli
+          oci --version
+
+      - name: Configure OCI authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/oci_api_key.pem"
+          chmod 600 "$HOME/.oci/oci_api_key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=$OCI_USER_OCID
+          fingerprint=$OCI_FINGERPRINT
+          tenancy=$OCI_TENANCY_OCID
+          region=$OCI_REGION
+          key_file=$HOME/.oci/oci_api_key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          oci iam region-subscription list --output table >/dev/null
+          echo "OCI authentication OK"
+
+      - name: Guard and power-cycle target
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST="ops/oci-power-cycle-request.json"
+          [ -f "$REQUEST" ] || { echo "::error::$REQUEST not found"; exit 1; }
+
+          REQUEST_ID="$(jq -r '.request_id // empty' "$REQUEST")"
+          INSTANCE_NAME="$(jq -r '.instance_name // empty' "$REQUEST")"
+          CONFIRM="$(jq -r '.confirm // false' "$REQUEST")"
+
+          if [ -z "$REQUEST_ID" ] || [ -z "$INSTANCE_NAME" ]; then
+            echo "::error::request_id and instance_name are required"
+            exit 1
+          fi
+          if [ "$INSTANCE_NAME" != "agendafacil-evolution-v2" ]; then
+            echo "::error::Guard rejected target: only agendafacil-evolution-v2 is allowed"
+            exit 2
+          fi
+          if [ "$CONFIRM" != "true" ]; then
+            echo "::error::Guard rejected request: confirm must be true"
+            exit 3
+          fi
+
+          echo "Request: $REQUEST_ID"
+          echo "Target: $INSTANCE_NAME"
+
+          SEARCH_JSON="$(oci search resource structured-search \
+            --query-text "query instance resources where displayName = '$INSTANCE_NAME'" \
+            --query 'data.items[0]' \
+            --raw-output)"
+          if [ -z "$SEARCH_JSON" ] || [ "$SEARCH_JSON" = "null" ]; then
+            echo "::error::Target instance not found"
+            exit 4
+          fi
+
+          IID="$(printf '%s' "$SEARCH_JSON" | jq -r '.identifier')"
+          INSTANCE_JSON="$(oci compute instance get --instance-id "$IID" --output json)"
+          NAME="$(printf '%s' "$INSTANCE_JSON" | jq -r '.data."display-name"')"
+          SHAPE="$(printf '%s' "$INSTANCE_JSON" | jq -r '.data.shape')"
+          STATE="$(printf '%s' "$INSTANCE_JSON" | jq -r '.data."lifecycle-state"')"
+
+          echo "Validated instance: name=$NAME shape=$SHAPE state=$STATE"
+          echo "Instance OCID: ${IID:0:30}... (truncated)"
+
+          if [ "$NAME" != "agendafacil-evolution-v2" ] || [ "$SHAPE" != "VM.Standard.E2.1.Micro" ]; then
+            echo "::error::Target identity/shape guard failed"
+            exit 5
+          fi
+
+          if [ "$STATE" != "RUNNING" ] && [ "$STATE" != "STOPPED" ]; then
+            echo "::error::Unexpected lifecycle state: $STATE"
+            exit 6
+          fi
+
+          if [ "$STATE" = "RUNNING" ]; then
+            echo "Hard STOP: guest appears stuck before user-space; target has no production workload"
+            oci compute instance action --instance-id "$IID" --action STOP >/dev/null
+
+            for attempt in {1..60}; do
+              STATE="$(oci compute instance get --instance-id "$IID" --query 'data."lifecycle-state"' --raw-output)"
+              echo "Stop state=$STATE (attempt $attempt/60)"
+              [ "$STATE" = "STOPPED" ] && break
+              sleep 5
+            done
+            if [ "$STATE" != "STOPPED" ]; then
+              echo "::error::Instance did not reach STOPPED"
+              exit 7
+            fi
+          else
+            echo "Target was already STOPPED; proceeding to START"
+          fi
+
+          echo "Starting target..."
+          oci compute instance action --instance-id "$IID" --action START >/dev/null
+          for attempt in {1..120}; do
+            STATE="$(oci compute instance get --instance-id "$IID" --query 'data."lifecycle-state"' --raw-output)"
+            echo "Start state=$STATE (attempt $attempt/120)"
+            [ "$STATE" = "RUNNING" ] && break
+            sleep 5
+          done
+          if [ "$STATE" != "RUNNING" ]; then
+            echo "::error::Instance did not return to RUNNING"
+            exit 8
+          fi
+
+          echo "=== NETWORK AFTER POWER CYCLE ==="
+          oci compute instance list-vnics \
+            --instance-id "$IID" \
+            --query 'data[].{private_ip:"private-ip",public_ip:"public-ip"}' \
+            --output table
+
+          echo "POWER_CYCLE_COMPLETE"
