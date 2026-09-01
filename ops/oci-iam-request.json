@@ -1,6 +1,9 @@
 {
-  "request_id": "run-command-iam-20260831-1625",
-  "instance_name": "agendafacil-evolution",
+  "request_id": "run-command-iam-both-vms-20260901-019",
+  "instance_names": [
+    "agendafacil-evolution",
+    "agendafacil-evolution-v2"
+  ],
   "dynamic_group_name": "AgendaFacilRunCommand",
   "policy_name": "AgendaFacilRunCommandPolicy"
 }
