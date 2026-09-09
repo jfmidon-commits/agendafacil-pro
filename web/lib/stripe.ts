@@ -20,7 +20,7 @@ export function lookupKeyForPlan(plan: CheckoutPlan) {
 }
 
 export function billingIntervalFromPrice(price: Pick<Stripe.Price, "recurring">): BillingInterval {
-  const interval = price.recurring?.interval;
+  const interval = price.recurring?.interval as string | null | undefined;
   return interval === "month" || interval === "year" ? interval : null;
 }
 
