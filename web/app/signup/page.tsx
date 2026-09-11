@@ -4,6 +4,14 @@ import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+const PRODUCTION_APP_URL = "https://agendafacil-staging-pearl.vercel.app";
+
+function getAuthRedirectUrl() {
+  const configured = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
+  const base = configured || PRODUCTION_APP_URL;
+  return `${base.replace(/\/$/, "")}/auth/callback?next=/onboarding`;
+}
+
 export default function SignupPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -19,7 +27,7 @@ export default function SignupPage() {
       password: String(form.get("password")),
       options: {
         data: { name: String(form.get("name")), phone: String(form.get("phone")) },
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=/onboarding`,
+        emailRedirectTo: getAuthRedirectUrl(),
       },
     });
     if (error) { setError(error.message); setLoading(false); return; }
