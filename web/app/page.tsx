@@ -1,6 +1,20 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
-export default function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ code?: string }>;
+}) {
+  const params = await searchParams;
+
+  // Supabase confirmation emails can land on the configured Site URL with
+  // ?code=... instead of the explicit /auth/callback path. Forward the code
+  // to the server callback so the PKCE session exchange still happens.
+  if (params.code) {
+    redirect(`/auth/callback?code=${encodeURIComponent(params.code)}&next=/onboarding`);
+  }
+
   return (
     <main>
       <section className="hero">
