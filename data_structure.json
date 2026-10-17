@@ -100,6 +100,15 @@
       "createdAt": "timestamp"
     }
   },
+  "bookingLocks": {
+    "description": "CONTROLE INTERNO de concorrência de reservas; acesso somente via Admin SDK",
+    "fields": {
+      "userId": "string - ID do profissional",
+      "date": "string - YYYYMMDD no fuso America/Sao_Paulo",
+      "lastBookingAt": "timestamp - Último commit de reserva no dia",
+      "version": "number - Versão monotônica do lock diário"
+    }
+  },
   "subscriptions": {
     "description": "Assinaturas Stripe (fonte oficial da verdade)",
     "fields": {
